@@ -1,0 +1,87 @@
+#include "daytrader/indicators/TechnicalIndicators.hpp"
+
+#include <array>
+#include <cmath>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+namespace {
+
+void require(bool condition, const std::string& message)
+{
+    if (!condition) {
+        throw std::runtime_error(message);
+    }
+}
+
+void require_near(double actual, double expected, const std::string& message)
+{
+    if (std::abs(actual - expected) > 1e-9) {
+        throw std::runtime_error(message);
+    }
+}
+
+void ema_returns_current_and_previous_values()
+{
+    constexpr std::array values{1.0, 2.0, 3.0};
+    const auto ema = daytrader::indicators::exponential_moving_average(values, 2);
+    require_near(ema.previous, 5.0 / 3.0, "unexpected previous EMA");
+    require_near(ema.current, 23.0 / 9.0, "unexpected current EMA");
+}
+
+void vwap_uses_only_the_latest_new_york_session()
+{
+    using daytrader::domain::MarketBar;
+    const MarketBar previous_day{
+        .epoch_seconds = 1'699'913'600,
+        .volume = 100.0,
+        .weighted_average_price = 50.0,
+    };
+    const MarketBar first{
+        .epoch_seconds = 1'700'000'000,
+        .volume = 1.0,
+        .weighted_average_price = 100.0,
+    };
+    const MarketBar second{
+        .epoch_seconds = 1'700'000'300,
+        .volume = 3.0,
+        .weighted_average_price = 110.0,
+    };
+    const std::array<const MarketBar*, 3> bars{&previous_day, &first, &second};
+
+    const auto value = daytrader::indicators::session_vwap(
+        bars,
+        daytrader::time::TimeZoneFormatter{"America/New_York"}
+    );
+    require(value.has_value(), "expected a session VWAP");
+    require_near(*value, 107.5, "VWAP should exclude the previous session");
+}
+
+void atr_uses_true_ranges_and_wilder_initial_average()
+{
+    using daytrader::domain::MarketBar;
+    const MarketBar first{.high = 11.0, .low = 9.0, .close = 10.0};
+    const MarketBar second{.high = 13.0, .low = 10.0, .close = 12.0};
+    const MarketBar third{.high = 14.0, .low = 11.0, .close = 13.0};
+    const std::array<const MarketBar*, 3> bars{&first, &second, &third};
+
+    const auto atr = daytrader::indicators::average_true_range(bars, 3);
+    require_near(atr, 8.0 / 3.0, "unexpected ATR");
+}
+
+} // namespace
+
+int main()
+{
+    try {
+        ema_returns_current_and_previous_values();
+        vwap_uses_only_the_latest_new_york_session();
+        atr_uses_true_ranges_and_wilder_initial_average();
+        std::cout << "TechnicalIndicatorsTests passed\n";
+        return 0;
+    } catch (const std::exception& exception) {
+        std::cerr << "TechnicalIndicatorsTests failed: " << exception.what() << '\n';
+        return 1;
+    }
+}
