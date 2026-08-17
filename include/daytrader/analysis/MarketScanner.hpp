@@ -2,6 +2,7 @@
 
 #include "daytrader/domain/InstrumentBars.hpp"
 #include "daytrader/domain/MarketScan.hpp"
+#include "daytrader/time/TimeZoneFormatter.hpp"
 #include "daytrader/universe/EtfDefinition.hpp"
 
 #include <chrono>
@@ -24,7 +25,7 @@ public:
     ) const;
 
 private:
-    std::string time_zone_;
+    time::TimeZoneFormatter time_formatter_;
     std::chrono::seconds bar_interval_;
 };
 

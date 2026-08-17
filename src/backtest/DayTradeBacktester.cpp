@@ -1,0 +1,436 @@
+#include "daytrader/backtest/DayTradeBacktester.hpp"
+
+#include "daytrader/analysis/AnalysisParameters.hpp"
+#include "daytrader/analysis/MarketScanner.hpp"
+#include "daytrader/config/MarketDataSettings.hpp"
+#include "daytrader/domain/TradeDecision.hpp"
+#include "daytrader/time/TimeZoneFormatter.hpp"
+#include "daytrader/universe/EtfDefinition.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <optional>
+#include <ranges>
+#include <set>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+namespace daytrader::backtest {
+namespace {
+
+constexpr std::size_t rolling_analysis_bars = 128;
+
+using BarIndex = std::unordered_map<std::int64_t, const domain::MarketBar*>;
+
+struct PendingEntry {
+    std::string session_date;
+    double atr{};
+};
+
+struct Position {
+    std::string session_date;
+    std::int64_t entry_timestamp{};
+    double entry_price{};
+    double initial_atr{};
+    double stop_price{};
+    double peak_price{};
+    double trough_price{};
+    bool trailing_active{};
+    int non_strong_bars{};
+};
+
+struct PendingExit {
+    ExitReason reason{ExitReason::momentum_faded};
+};
+
+[[nodiscard]] const domain::InstrumentBars& require_instrument(
+    const std::vector<domain::InstrumentBars>& instruments,
+    const std::string& symbol
+)
+{
+    const auto found = std::ranges::find(instruments, symbol, &domain::InstrumentBars::symbol);
+    if (found == instruments.end()) {
+        throw std::invalid_argument("backtest data is missing " + symbol);
+    }
+    return *found;
+}
+
+[[nodiscard]] BarIndex index_bars(const domain::InstrumentBars& instrument)
+{
+    BarIndex index;
+    index.reserve(instrument.bars.size());
+    for (const auto& bar : instrument.bars) {
+        index.insert_or_assign(bar.epoch_seconds, &bar);
+    }
+    return index;
+}
+
+[[nodiscard]] std::vector<std::int64_t> common_timestamps(
+    const std::vector<BarIndex>& indexes
+)
+{
+    if (indexes.empty()) {
+        return {};
+    }
+
+    std::vector<std::int64_t> timestamps;
+    timestamps.reserve(indexes.front().size());
+    for (const auto& [timestamp, unused] : indexes.front()) {
+        static_cast<void>(unused);
+        const bool present_everywhere = std::ranges::all_of(
+            indexes | std::views::drop(1),
+            [timestamp](const BarIndex& index) { return index.contains(timestamp); }
+        );
+        if (present_everywhere) {
+            timestamps.push_back(timestamp);
+        }
+    }
+    std::ranges::sort(timestamps);
+    return timestamps;
+}
+
+[[nodiscard]] std::vector<universe::EtfDefinition> backtest_universe(
+    const DayTradeBacktestSettings& settings
+)
+{
+    using universe::EtfDefinition;
+    using universe::EtfGroup;
+    return {
+        EtfDefinition{
+            .market_data = config::HistoricalDataSettings{.symbol = "SPY"},
+            .name = "S&P 500",
+            .group = EtfGroup::broad_market,
+        },
+        EtfDefinition{
+            .market_data = config::HistoricalDataSettings{.symbol = "QQQ"},
+            .name = "Nasdaq-100",
+            .group = EtfGroup::broad_market,
+            .benchmark_symbol = "SPY",
+        },
+        EtfDefinition{
+            .market_data = config::HistoricalDataSettings{.symbol = settings.signal_symbol},
+            .name = settings.signal_symbol,
+            .group = EtfGroup::industry,
+            .benchmark_symbol = "SPY",
+            .leveraged_long_symbol = settings.trade_symbol,
+        },
+    };
+}
+
+void append_trade(
+    BacktestReport& report,
+    const DayTradeBacktestSettings& settings,
+    const Position& position,
+    std::int64_t exit_timestamp,
+    double exit_price,
+    ExitReason reason
+)
+{
+    const double gross_return = ((exit_price / position.entry_price) - 1.0) * 100.0;
+    const double round_trip_cost = settings.per_side_cost_basis_points * 2.0 / 100.0;
+    const double net_return = gross_return - round_trip_cost;
+    report.trade_log.push_back(TradeRecord{
+        .session_date = position.session_date,
+        .entry_timestamp = position.entry_timestamp,
+        .exit_timestamp = exit_timestamp,
+        .entry_price = position.entry_price,
+        .exit_price = exit_price,
+        .gross_return_percent = gross_return,
+        .net_return_percent = net_return,
+        .maximum_favorable_excursion_percent =
+            ((position.peak_price / position.entry_price) - 1.0) * 100.0,
+        .maximum_adverse_excursion_percent =
+            ((position.trough_price / position.entry_price) - 1.0) * 100.0,
+        .exit_reason = reason,
+    });
+}
+
+void summarize(BacktestReport& report)
+{
+    report.trades = report.trade_log.size();
+    if (report.trade_log.empty()) {
+        return;
+    }
+
+    double return_sum{};
+    double win_sum{};
+    double loss_sum{};
+    double holding_minutes_sum{};
+    double mfe_sum{};
+    double equity = 1.0;
+    double peak_equity = 1.0;
+    double maximum_drawdown{};
+
+    for (const auto& trade : report.trade_log) {
+        return_sum += trade.net_return_percent;
+        holding_minutes_sum += static_cast<double>(
+            trade.exit_timestamp - trade.entry_timestamp
+        ) / 60.0;
+        mfe_sum += trade.maximum_favorable_excursion_percent;
+        if (trade.net_return_percent > 0.0) {
+            ++report.wins;
+            win_sum += trade.net_return_percent;
+        } else {
+            ++report.losses;
+            loss_sum += trade.net_return_percent;
+        }
+
+        equity *= 1.0 + trade.net_return_percent / 100.0;
+        peak_equity = std::max(peak_equity, equity);
+        if (peak_equity > 0.0) {
+            maximum_drawdown = std::max(
+                maximum_drawdown,
+                (peak_equity - equity) / peak_equity * 100.0
+            );
+        }
+    }
+
+    const auto trade_count = static_cast<double>(report.trades);
+    report.win_rate_percent = static_cast<double>(report.wins) / trade_count * 100.0;
+    report.average_net_return_percent = return_sum / trade_count;
+    report.average_win_percent = report.wins == 0
+        ? 0.0
+        : win_sum / static_cast<double>(report.wins);
+    report.average_loss_percent = report.losses == 0
+        ? 0.0
+        : loss_sum / static_cast<double>(report.losses);
+    report.compounded_return_percent = (equity - 1.0) * 100.0;
+    report.profit_factor = loss_sum == 0.0
+        ? std::numeric_limits<double>::infinity()
+        : win_sum / std::abs(loss_sum);
+    report.maximum_drawdown_percent = maximum_drawdown;
+    report.average_holding_minutes = holding_minutes_sum / trade_count;
+    report.average_mfe_percent = mfe_sum / trade_count;
+}
+
+} // namespace
+
+DayTradeBacktester::DayTradeBacktester(DayTradeBacktestSettings settings)
+    : settings_{std::move(settings)}
+{
+    if (settings_.strategy_name.empty()) {
+        throw std::invalid_argument("backtest strategy name cannot be empty");
+    }
+    if (settings_.entry_start_minute >= settings_.entry_end_minute) {
+        throw std::invalid_argument("backtest entry window is invalid");
+    }
+    if (settings_.initial_stop_atr <= 0.0 || settings_.trailing_activation_atr <= 0.0
+        || settings_.trailing_distance_atr <= 0.0) {
+        throw std::invalid_argument("backtest ATR multipliers must be positive");
+    }
+    if (settings_.per_side_cost_basis_points < 0.0) {
+        throw std::invalid_argument("backtest trading cost cannot be negative");
+    }
+}
+
+BacktestReport DayTradeBacktester::run(
+    const std::vector<domain::InstrumentBars>& instruments
+) const
+{
+    const std::vector<std::string> symbols{
+        "SPY",
+        "QQQ",
+        settings_.signal_symbol,
+        settings_.trade_symbol,
+    };
+    std::vector<BarIndex> indexes;
+    indexes.reserve(symbols.size());
+    for (const auto& symbol : symbols) {
+        const auto& source = require_instrument(instruments, symbol);
+        indexes.push_back(index_bars(source));
+    }
+
+    const auto timestamps = common_timestamps(indexes);
+    if (timestamps.empty()) {
+        throw std::runtime_error("backtest instruments have no common bars");
+    }
+
+    std::vector<domain::InstrumentBars> rolling;
+    rolling.reserve(symbols.size());
+    for (const auto& symbol : symbols) {
+        rolling.push_back(domain::InstrumentBars{.symbol = symbol});
+    }
+
+    BacktestReport report{.strategy_name = settings_.strategy_name};
+    const auto etfs = backtest_universe(settings_);
+    const analysis::MarketScanner scanner{
+        settings_.time_zone,
+        std::chrono::minutes{5},
+    };
+    const time::TimeZoneFormatter formatter{settings_.time_zone};
+    std::set<std::string> sessions;
+    std::optional<PendingEntry> pending_entry;
+    std::optional<PendingExit> pending_exit;
+    std::optional<Position> position;
+    std::optional<domain::MarketBar> previous_trade_bar;
+    std::string current_session;
+    bool traded_this_session{};
+
+    for (const auto timestamp : timestamps) {
+        for (std::size_t index = 0; index < indexes.size(); ++index) {
+            rolling[index].bars.push_back(*indexes[index].at(timestamp));
+            if (rolling[index].bars.size() > rolling_analysis_bars) {
+                rolling[index].bars.erase(rolling[index].bars.begin());
+            }
+        }
+        const auto& trade_bar = *indexes.back().at(timestamp);
+        const std::string session = formatter.format_date(timestamp);
+        const int minute = formatter.minutes_since_midnight(timestamp);
+        sessions.insert(session);
+
+        if (!current_session.empty() && session != current_session) {
+            if (position.has_value() && previous_trade_bar.has_value()) {
+                append_trade(
+                    report,
+                    settings_,
+                    *position,
+                    previous_trade_bar->epoch_seconds,
+                    previous_trade_bar->close,
+                    ExitReason::session_end
+                );
+                position.reset();
+            }
+            pending_entry.reset();
+            pending_exit.reset();
+            traded_this_session = false;
+        }
+        current_session = session;
+
+        // Decisions are created from the prior completed bar, so scheduled
+        // actions execute at this bar's open before this bar is analyzed.
+        if (position.has_value() && pending_exit.has_value()) {
+            append_trade(
+                report,
+                settings_,
+                *position,
+                timestamp,
+                trade_bar.open,
+                pending_exit->reason
+            );
+            position.reset();
+            pending_exit.reset();
+        }
+        if (!position.has_value() && pending_entry.has_value()) {
+            if (pending_entry->session_date == session && !traded_this_session) {
+                position = Position{
+                    .session_date = session,
+                    .entry_timestamp = timestamp,
+                    .entry_price = trade_bar.open,
+                    .initial_atr = pending_entry->atr,
+                    .stop_price = trade_bar.open
+                        - settings_.initial_stop_atr * pending_entry->atr,
+                    .peak_price = trade_bar.open,
+                    .trough_price = trade_bar.open,
+                };
+                traded_this_session = true;
+            }
+            pending_entry.reset();
+        }
+
+        if (position.has_value()) {
+            const bool stopped_at_open = trade_bar.open <= position->stop_price;
+            const bool stopped_intrabar = trade_bar.low <= position->stop_price;
+            if (stopped_at_open || stopped_intrabar) {
+                const double exit_price = stopped_at_open
+                    ? trade_bar.open
+                    : position->stop_price;
+                const auto reason = position->trailing_active
+                    ? ExitReason::trailing_stop
+                    : ExitReason::protective_stop;
+                append_trade(report, settings_, *position, timestamp, exit_price, reason);
+                position.reset();
+            }
+        }
+
+        if (rolling.front().bars.size() < analysis::minimum_analysis_bars) {
+            previous_trade_bar = trade_bar;
+            continue;
+        }
+
+        const auto scan = scanner.scan(rolling, etfs);
+        const auto rank = std::ranges::find(
+            scan.rankings,
+            settings_.signal_symbol,
+            &domain::RankedEtf::symbol
+        );
+        if (rank == scan.rankings.end()) {
+            previous_trade_bar = trade_bar;
+            continue;
+        }
+
+        if (position.has_value()) {
+            position->peak_price = std::max(position->peak_price, trade_bar.high);
+            position->trough_price = std::min(position->trough_price, trade_bar.low);
+
+            const double current_atr = rank->leveraged_entry_zone.has_value()
+                ? rank->leveraged_entry_zone->atr14
+                : position->initial_atr;
+            if (position->peak_price - position->entry_price
+                >= settings_.trailing_activation_atr * position->initial_atr) {
+                position->trailing_active = true;
+                position->stop_price = std::max(
+                    position->stop_price,
+                    position->peak_price - settings_.trailing_distance_atr * current_atr
+                );
+            }
+
+            if (minute >= settings_.forced_exit_signal_minute) {
+                pending_exit = PendingExit{.reason = ExitReason::session_end};
+            } else if (rank->long_opportunity.if_held
+                       == domain::HoldingGuidance::exit) {
+                pending_exit = PendingExit{.reason = ExitReason::weak_signal};
+            } else if (rank->long_opportunity.if_held
+                       == domain::HoldingGuidance::hold) {
+                position->non_strong_bars = 0;
+            } else {
+                ++position->non_strong_bars;
+                if (position->non_strong_bars >= 2) {
+                    pending_exit = PendingExit{.reason = ExitReason::momentum_faded};
+                }
+            }
+        } else if (!traded_this_session && !pending_entry.has_value()
+                   && minute >= settings_.entry_start_minute
+                   && minute <= settings_.entry_end_minute
+                   && scan.market_regime == domain::MarketRegime::bullish
+                   && rank->long_opportunity.entry == domain::LongEntryDecision::ready
+                   && rank->leveraged_entry_zone.has_value()) {
+            const bool leveraged_ready = rank->leveraged_entry_zone->state
+                == domain::EntryZoneState::in_zone;
+            if (!settings_.require_leveraged_vwap_zone || leveraged_ready) {
+                pending_entry = PendingEntry{
+                    .session_date = session,
+                    .atr = rank->leveraged_entry_zone->atr14,
+                };
+            }
+        }
+
+        previous_trade_bar = trade_bar;
+    }
+
+    if (position.has_value() && previous_trade_bar.has_value()) {
+        append_trade(
+            report,
+            settings_,
+            *position,
+            previous_trade_bar->epoch_seconds,
+            previous_trade_bar->close,
+            ExitReason::data_end
+        );
+    }
+
+    report.sessions = sessions.size();
+    if (!sessions.empty()) {
+        report.first_session = *sessions.begin();
+        report.last_session = *sessions.rbegin();
+    }
+    summarize(report);
+    return report;
+}
+
+} // namespace daytrader::backtest

@@ -66,6 +66,10 @@ void print_rotation_table_header(std::ostream& output)
            << std::setw(14) << "entry state"
            << std::setw(24) << "leveraged entry zone"
            << std::setw(16) << "leveraged state"
+           << std::setw(11) << "phase"
+           << std::setw(8) << "score"
+           << std::setw(12) << "entry"
+           << std::setw(11) << "if held"
            << std::setw(9) << "long"
            << std::setw(9) << "short" << '\n';
 }
@@ -89,6 +93,10 @@ void print_rotation_rank(std::ostream& output, const domain::RankedEtf& rank)
            << std::setw(14) << entry_zone_state(rank.entry_zone)
            << std::setw(24) << entry_zone_text(rank.leveraged_entry_zone)
            << std::setw(16) << entry_zone_state(rank.leveraged_entry_zone)
+           << std::setw(11) << domain::to_string(rank.long_opportunity.phase)
+           << std::setw(8) << rank.long_opportunity.bullish_score
+           << std::setw(12) << domain::to_string(rank.long_opportunity.entry)
+           << std::setw(11) << domain::to_string(rank.long_opportunity.if_held)
            << std::setw(9) << symbol_or_dash(rank.leveraged_long_symbol)
            << std::setw(9) << symbol_or_dash(rank.leveraged_short_symbol)
            << '\n';

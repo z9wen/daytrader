@@ -4,6 +4,7 @@
 #include "daytrader/universe/EtfDefinition.hpp"
 
 #include <chrono>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,7 @@ struct AppConfig {
     MonitoringSettings monitoring;
     std::vector<universe::EtfDefinition> etfs;
     std::string time_zone{"America/New_York"};
+    std::filesystem::path data_directory{"data/ibkr/rth_5m"};
 
     // Applies DAYTRADER_* environment overrides and validates the result.
     [[nodiscard]] static AppConfig from_environment();

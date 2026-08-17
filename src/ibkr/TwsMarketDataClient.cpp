@@ -33,7 +33,6 @@ namespace daytrader::ibkr {
 namespace {
 
 constexpr int first_historical_request_id = 1001;
-constexpr std::size_t maximum_bars_per_instrument = 2'048;
 
 [[nodiscard]] bool is_informational_message(int error_code)
 {
@@ -314,6 +313,11 @@ private:
             if (request.symbol.empty()) {
                 throw std::invalid_argument("historical-data symbols cannot be empty");
             }
+            if (request.maximum_bars == 0) {
+                throw std::invalid_argument(
+                    "maximum historical bars must be positive for " + request.symbol
+                );
+            }
             if (!symbols.insert(request.symbol).second) {
                 throw std::invalid_argument("duplicate historical-data symbol: " + request.symbol);
             }
@@ -409,11 +413,12 @@ private:
             bars.insert(found, std::move(converted));
         }
 
-        if (bars.size() > maximum_bars_per_instrument) {
+        const auto maximum_bars = requests_[index].maximum_bars;
+        if (bars.size() > maximum_bars) {
             bars.erase(
                 bars.begin(),
                 bars.begin() + static_cast<std::ptrdiff_t>(
-                    bars.size() - maximum_bars_per_instrument
+                    bars.size() - maximum_bars
                 )
             );
         }

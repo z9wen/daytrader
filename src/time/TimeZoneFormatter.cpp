@@ -59,10 +59,9 @@ private:
     return path;
 }
 
-[[nodiscard]] std::string format_in_zone(
+[[nodiscard]] std::tuple<std::string, std::string, int> format_all_in_zone(
     const std::string& zone_name,
-    std::int64_t epoch_seconds,
-    const char* pattern
+    std::int64_t epoch_seconds
 )
 {
     const std::lock_guard lock{time_zone_mutex};
@@ -74,11 +73,17 @@ private:
         throw std::runtime_error("unable to convert market-data timestamp");
     }
 
-    std::array<char, 32> output{};
-    if (std::strftime(output.data(), output.size(), pattern, &local_time) == 0) {
+    std::array<char, 32> full{};
+    std::array<char, 16> date{};
+    if (std::strftime(full.data(), full.size(), "%Y-%m-%d %H:%M:%S %Z", &local_time) == 0
+        || std::strftime(date.data(), date.size(), "%Y-%m-%d", &local_time) == 0) {
         throw std::runtime_error("unable to format market-data timestamp");
     }
-    return output.data();
+    return {
+        std::string{full.data()},
+        std::string{date.data()},
+        local_time.tm_hour * 60 + local_time.tm_min,
+    };
 }
 
 } // namespace
@@ -89,14 +94,33 @@ TimeZoneFormatter::TimeZoneFormatter(std::string zone_name)
     static_cast<void>(zone_file_for(zone_name_));
 }
 
+const TimeZoneFormatter::CachedTime& TimeZoneFormatter::cached_time(
+    std::int64_t epoch_seconds
+) const
+{
+    const auto found = cache_.find(epoch_seconds);
+    if (found != cache_.end()) {
+        return found->second;
+    }
+    return cache_.emplace(
+        epoch_seconds,
+        format_all_in_zone(zone_name_, epoch_seconds)
+    ).first->second;
+}
+
 std::string TimeZoneFormatter::format(std::int64_t epoch_seconds) const
 {
-    return format_in_zone(zone_name_, epoch_seconds, "%Y-%m-%d %H:%M:%S %Z");
+    return std::get<0>(cached_time(epoch_seconds));
 }
 
 std::string TimeZoneFormatter::format_date(std::int64_t epoch_seconds) const
 {
-    return format_in_zone(zone_name_, epoch_seconds, "%Y-%m-%d");
+    return std::get<1>(cached_time(epoch_seconds));
+}
+
+int TimeZoneFormatter::minutes_since_midnight(std::int64_t epoch_seconds) const
+{
+    return std::get<2>(cached_time(epoch_seconds));
 }
 
 } // namespace daytrader::time

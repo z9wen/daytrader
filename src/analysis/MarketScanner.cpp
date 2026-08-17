@@ -1,6 +1,7 @@
 #include "daytrader/analysis/MarketScanner.hpp"
 
 #include "daytrader/analysis/EntryZoneCalculator.hpp"
+#include "daytrader/analysis/LongOpportunityAnalyzer.hpp"
 #include "daytrader/analysis/MarketRegimeAnalyzer.hpp"
 #include "daytrader/analysis/RelativeStrengthRanker.hpp"
 #include "daytrader/analysis/VixAnalyzer.hpp"
@@ -105,10 +106,21 @@ namespace {
     return rankings;
 }
 
+void add_long_opportunities(
+    std::vector<domain::RankedEtf>& rankings,
+    domain::MarketRegime market_regime
+)
+{
+    const LongOpportunityAnalyzer analyzer;
+    for (auto& rank : rankings) {
+        rank.long_opportunity = analyzer.analyze(rank, market_regime);
+    }
+}
+
 } // namespace
 
 MarketScanner::MarketScanner(std::string time_zone, std::chrono::seconds bar_interval)
-    : time_zone_{std::move(time_zone)}
+    : time_formatter_{std::move(time_zone)}
     , bar_interval_{bar_interval}
 {
     if (bar_interval_ <= std::chrono::seconds::zero()) {
@@ -123,10 +135,8 @@ domain::MarketScan MarketScanner::scan(
 {
     const market_data::InstrumentBarsLookup bars{instruments};
     const market_data::BarSeriesAligner aligner{bar_interval_};
-    const time::TimeZoneFormatter time_formatter{time_zone_};
-
     const auto market_pairs = aligner.align_completed(bars.at("QQQ"), bars.at("SPY"));
-    auto market = MarketRegimeAnalyzer{}.analyze(market_pairs, time_formatter);
+    auto market = MarketRegimeAnalyzer{}.analyze(market_pairs, time_formatter_);
     std::optional<domain::VolatilitySnapshot> vix;
     if (const auto* vix_bars = bars.find("VIX"); vix_bars != nullptr) {
         const auto vix_pairs = aligner.align_completed(*vix_bars, bars.at("SPY"));
@@ -139,7 +149,7 @@ domain::MarketScan MarketScanner::scan(
         bars,
         aligner,
         market.epoch_seconds,
-        time_formatter
+        time_formatter_
     );
     auto industry_rankings = build_rankings(
         universe::EtfGroup::industry,
@@ -147,8 +157,10 @@ domain::MarketScan MarketScanner::scan(
         bars,
         aligner,
         market.epoch_seconds,
-        time_formatter
+        time_formatter_
     );
+    add_long_opportunities(sector_rankings, market.regime);
+    add_long_opportunities(industry_rankings, market.regime);
     const strategy::LeveragedEtfSelector selector;
     auto sector_candidate = selector.select(market.regime, sector_rankings);
     auto industry_candidate = selector.select(market.regime, industry_rankings);
