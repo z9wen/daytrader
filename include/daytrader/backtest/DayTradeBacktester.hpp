@@ -3,6 +3,8 @@
 #include "daytrader/backtest/BacktestReport.hpp"
 #include "daytrader/domain/InstrumentBars.hpp"
 
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,6 +26,9 @@ struct DayTradeBacktestSettings {
     double trailing_distance_atr{0.75};
     double per_side_cost_basis_points{2.0};
     bool require_leveraged_vwap_zone{};
+    // Older bars may still be supplied as indicator warm-up, but they cannot
+    // create trades or inflate the reported number of tested sessions.
+    std::optional<std::int64_t> earliest_entry_timestamp;
 };
 
 class DayTradeBacktester {

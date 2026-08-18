@@ -62,6 +62,14 @@ void enters_on_next_bar_and_closes_the_same_session()
     require(report.sessions == 1, "expected one RTH session");
     require(report.trades == 1, "expected exactly one trade per session");
     require(report.wins == 1, "expected the synthetic rising trade to win");
+    require(report.trade_log.front().signal_atr_at_entry > 0.0,
+            "the SOXX signal ATR should be retained with the trade");
+    require(report.trade_log.front().trade_atr_at_entry > 0.0,
+            "the leveraged execution ATR should be retained with the trade");
+    require(report.trade_log.front().signal_atr_percent_at_entry > 0.0,
+            "signal ATR should also be normalized by SOXX entry price");
+    require(report.trade_log.front().signal_atr_expansion_ratio > 0.0,
+            "the SOXX fast/slow ATR ratio should be retained with the trade");
     require(
         report.trade_log.front().entry_timestamp > session_open + 20 * 300,
         "entry must occur after the completed signal bar"
@@ -72,12 +80,32 @@ void enters_on_next_bar_and_closes_the_same_session()
     );
 }
 
+void excludes_warmup_bars_from_the_report_window()
+{
+    const std::vector<daytrader::domain::InstrumentBars> instruments{
+        make_session("SPY", 100.0, 0.001, 0.10),
+        make_session("QQQ", 200.0, 0.003, 0.15),
+        make_session("SOXX", 300.0, 0.005, 0.20),
+        make_session("SOXL", 50.0, 0.003, 0.10),
+    };
+    const auto report = daytrader::backtest::DayTradeBacktester{
+        daytrader::backtest::DayTradeBacktestSettings{
+            .strategy_name = "windowed",
+            .earliest_entry_timestamp = session_open + 78 * 300,
+        }
+    }.run(instruments);
+
+    require(report.sessions == 0, "warmup-only sessions must not enter report statistics");
+    require(report.trades == 0, "warmup-only bars must not create trades");
+}
+
 } // namespace
 
 int main()
 {
     try {
         enters_on_next_bar_and_closes_the_same_session();
+        excludes_warmup_bars_from_the_report_window();
         std::cout << "DayTradeBacktesterTests passed\n";
         return 0;
     } catch (const std::exception& exception) {

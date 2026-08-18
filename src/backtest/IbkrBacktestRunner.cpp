@@ -264,13 +264,21 @@ void sort_and_deduplicate(std::vector<domain::InstrumentBars>& instruments)
         );
     }
     if (!refresh_symbols.empty()) {
-        history = refresh_recent_history(
-            config,
-            refresh_duration_days,
-            refresh_symbols,
-            std::move(history),
-            store
-        );
+        try {
+            history = refresh_recent_history(
+                config,
+                refresh_duration_days,
+                refresh_symbols,
+                history,
+                store
+            );
+        } catch (const std::exception& exception) {
+            // A stale-but-complete cache is still useful for deterministic
+            // research when TWS is closed. Missing historical coverage remains
+            // fatal in the full-download path above.
+            std::clog << "IBKR recent refresh unavailable; using existing cache: "
+                      << exception.what() << '\n';
+        }
     }
     return history;
 }
@@ -287,17 +295,23 @@ std::vector<BacktestReport> IbkrBacktestRunner::run(
     }
 
     const auto history = load_or_fetch_history(config, calendar_days);
+    const auto cutoff = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+        - std::chrono::hours{calendar_days * 24}
+    ).count();
     std::vector<BacktestReport> reports;
     reports.reserve(2);
     reports.push_back(DayTradeBacktester{DayTradeBacktestSettings{
         .strategy_name = "SOXX VWAP",
         .time_zone = config.time_zone,
         .require_leveraged_vwap_zone = false,
+        .earliest_entry_timestamp = cutoff,
     }}.run(history));
     reports.push_back(DayTradeBacktester{DayTradeBacktestSettings{
         .strategy_name = "SOXX + SOXL VWAP",
         .time_zone = config.time_zone,
         .require_leveraged_vwap_zone = true,
+        .earliest_entry_timestamp = cutoff,
     }}.run(history));
     return reports;
 }

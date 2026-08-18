@@ -61,6 +61,9 @@ struct EntryZone {
     double current_price{};
     double session_vwap{};
     double atr14{};
+    double atr5{};
+    double atr_percent{};
+    double atr_expansion_ratio{};
     EntryZoneState state{EntryZoneState::trend_unconfirmed};
 };
 

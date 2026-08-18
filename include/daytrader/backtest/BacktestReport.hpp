@@ -20,8 +20,15 @@ struct TradeRecord {
     std::string session_date;
     std::int64_t entry_timestamp{};
     std::int64_t exit_timestamp{};
+    double signal_entry_price{};
     double entry_price{};
     double exit_price{};
+    double signal_atr_at_entry{};
+    double trade_atr_at_entry{};
+    double signal_atr_percent_at_entry{};
+    double trade_atr_percent_at_entry{};
+    double signal_atr_expansion_ratio{};
+    double trade_atr_expansion_ratio{};
     double gross_return_percent{};
     double net_return_percent{};
     double maximum_favorable_excursion_percent{};

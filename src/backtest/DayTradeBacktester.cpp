@@ -30,14 +30,21 @@ using BarIndex = std::unordered_map<std::int64_t, const domain::MarketBar*>;
 
 struct PendingEntry {
     std::string session_date;
-    double atr{};
+    double signal_atr{};
+    double trade_atr{};
+    double signal_atr_expansion_ratio{};
+    double trade_atr_expansion_ratio{};
 };
 
 struct Position {
     std::string session_date;
     std::int64_t entry_timestamp{};
+    double signal_entry_price{};
     double entry_price{};
-    double initial_atr{};
+    double signal_atr{};
+    double trade_atr{};
+    double signal_atr_expansion_ratio{};
+    double trade_atr_expansion_ratio{};
     double stop_price{};
     double peak_price{};
     double trough_price{};
@@ -139,8 +146,19 @@ void append_trade(
         .session_date = position.session_date,
         .entry_timestamp = position.entry_timestamp,
         .exit_timestamp = exit_timestamp,
+        .signal_entry_price = position.signal_entry_price,
         .entry_price = position.entry_price,
         .exit_price = exit_price,
+        .signal_atr_at_entry = position.signal_atr,
+        .trade_atr_at_entry = position.trade_atr,
+        .signal_atr_percent_at_entry = position.signal_entry_price > 0.0
+            ? position.signal_atr / position.signal_entry_price * 100.0
+            : 0.0,
+        .trade_atr_percent_at_entry = position.entry_price > 0.0
+            ? position.trade_atr / position.entry_price * 100.0
+            : 0.0,
+        .signal_atr_expansion_ratio = position.signal_atr_expansion_ratio,
+        .trade_atr_expansion_ratio = position.trade_atr_expansion_ratio,
         .gross_return_percent = gross_return,
         .net_return_percent = net_return,
         .maximum_favorable_excursion_percent =
@@ -280,9 +298,14 @@ BacktestReport DayTradeBacktester::run(
             }
         }
         const auto& trade_bar = *indexes.back().at(timestamp);
+        const auto& signal_bar = *indexes[2].at(timestamp);
         const std::string session = formatter.format_date(timestamp);
         const int minute = formatter.minutes_since_midnight(timestamp);
-        sessions.insert(session);
+        const bool in_test_window = !settings_.earliest_entry_timestamp.has_value()
+            || timestamp >= *settings_.earliest_entry_timestamp;
+        if (in_test_window) {
+            sessions.insert(session);
+        }
 
         if (!current_session.empty() && session != current_session) {
             if (position.has_value() && previous_trade_bar.has_value()) {
@@ -321,10 +344,16 @@ BacktestReport DayTradeBacktester::run(
                 position = Position{
                     .session_date = session,
                     .entry_timestamp = timestamp,
+                    .signal_entry_price = signal_bar.open,
                     .entry_price = trade_bar.open,
-                    .initial_atr = pending_entry->atr,
+                    .signal_atr = pending_entry->signal_atr,
+                    .trade_atr = pending_entry->trade_atr,
+                    .signal_atr_expansion_ratio =
+                        pending_entry->signal_atr_expansion_ratio,
+                    .trade_atr_expansion_ratio =
+                        pending_entry->trade_atr_expansion_ratio,
                     .stop_price = trade_bar.open
-                        - settings_.initial_stop_atr * pending_entry->atr,
+                        - settings_.initial_stop_atr * pending_entry->trade_atr,
                     .peak_price = trade_bar.open,
                     .trough_price = trade_bar.open,
                 };
@@ -370,9 +399,9 @@ BacktestReport DayTradeBacktester::run(
 
             const double current_atr = rank->leveraged_entry_zone.has_value()
                 ? rank->leveraged_entry_zone->atr14
-                : position->initial_atr;
+                : position->trade_atr;
             if (position->peak_price - position->entry_price
-                >= settings_.trailing_activation_atr * position->initial_atr) {
+                >= settings_.trailing_activation_atr * position->trade_atr) {
                 position->trailing_active = true;
                 position->stop_price = std::max(
                     position->stop_price,
@@ -394,18 +423,24 @@ BacktestReport DayTradeBacktester::run(
                     pending_exit = PendingExit{.reason = ExitReason::momentum_faded};
                 }
             }
-        } else if (!traded_this_session && !pending_entry.has_value()
+        } else if (in_test_window && !traded_this_session && !pending_entry.has_value()
                    && minute >= settings_.entry_start_minute
                    && minute <= settings_.entry_end_minute
                    && scan.market_regime == domain::MarketRegime::bullish
                    && rank->long_opportunity.entry == domain::LongEntryDecision::ready
+                   && rank->entry_zone.has_value()
                    && rank->leveraged_entry_zone.has_value()) {
             const bool leveraged_ready = rank->leveraged_entry_zone->state
                 == domain::EntryZoneState::in_zone;
             if (!settings_.require_leveraged_vwap_zone || leveraged_ready) {
                 pending_entry = PendingEntry{
                     .session_date = session,
-                    .atr = rank->leveraged_entry_zone->atr14,
+                    .signal_atr = rank->entry_zone->atr14,
+                    .trade_atr = rank->leveraged_entry_zone->atr14,
+                    .signal_atr_expansion_ratio =
+                        rank->entry_zone->atr_expansion_ratio,
+                    .trade_atr_expansion_ratio =
+                        rank->leveraged_entry_zone->atr_expansion_ratio,
                 };
             }
         }

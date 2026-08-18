@@ -89,13 +89,20 @@ add_library(daytrader_core
     src/analysis/LongOpportunityAnalyzer.cpp
     src/analysis/MarketRegimeAnalyzer.cpp
     src/analysis/MarketScanner.cpp
+    src/analysis/OrderFlowAggregator.cpp
+    src/analysis/OrderFlowSignalAnalyzer.cpp
+    src/analysis/OrderFlowWindowAnalyzer.cpp
     src/analysis/RelativeStrengthRanker.cpp
     src/analysis/RotationGrouper.cpp
+    src/analysis/TradeClassifier.cpp
     src/analysis/VixAnalyzer.cpp
     src/app/Application.cpp
     src/backtest/DayTradeBacktester.cpp
     src/backtest/IbkrBacktestRunner.cpp
+    src/backtest/OrderFlowBacktestRunner.cpp
     src/config/AppConfig.cpp
+    src/ibkr/HistoricalRequestPacer.cpp
+    src/ibkr/TwsHistoricalTickClient.cpp
     src/ibkr/TwsMarketDataClient.cpp
     src/indicators/TechnicalIndicators.cpp
     src/market_data/BarSeriesAligner.cpp
@@ -104,9 +111,11 @@ add_library(daytrader_core
     src/monitoring/MarketMonitor.cpp
     src/presentation/ConsoleScanPrinter.cpp
     src/presentation/BacktestReportPrinter.cpp
+    src/presentation/OrderFlowBacktestPrinter.cpp
     src/presentation/TerminalDashboard.cpp
     src/runtime/ShutdownSignal.cpp
     src/storage/MarketDataCsvStore.cpp
+    src/storage/OrderFlowTickCsvStore.cpp
     src/strategy/LeveragedEtfSelector.cpp
     src/time/TimeZoneFormatter.cpp
     src/universe/EtfUniverse.cpp
@@ -160,4 +169,5 @@ if(BUILD_TESTING)
     daytrader_add_test(daytrader_long_opportunity_tests tests/LongOpportunityTests.cpp)
     daytrader_add_test(daytrader_backtester_tests tests/DayTradeBacktesterTests.cpp)
     daytrader_add_test(daytrader_market_data_store_tests tests/MarketDataCsvStoreTests.cpp)
+    daytrader_add_test(daytrader_order_flow_tests tests/OrderFlowTests.cpp)
 endif()

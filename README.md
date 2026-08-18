@@ -22,7 +22,12 @@ Each rotation row separates trend from timing:
 
 The terminal has three pages: market context (`SPY`, `QQQ`, and optional `VIX`),
 the eleven standard sector ETFs, and twenty industry ETFs. Press `Tab` or
-`1`/`2`/`3` to switch pages.
+`1`/`2`/`3` to switch pages. Interactive tables automatically select a regular,
+compact, or minimal column set from the current terminal width. Rotation rows
+are separated into clearly labeled `STRONG`, `NEUTRAL`, and `WEAK` sections and
+paginated to the available height; press `[` or `]` to change page. A group that
+continues on another page repeats its label and column header. Resizing the
+terminal triggers a responsive redraw without requesting new market data.
 
 ## Prerequisites
 
@@ -89,6 +94,33 @@ limits entry to the morning window, allows one trade per session, estimates
 transaction costs, and reports win rate, average return, profit factor, maximum
 drawdown, holding time, and recent trades. Results are exploratory and do not
 promise future performance.
+
+For the first Order Flow experiment, run a 30-calendar-day baseline and fetch
+bounded SOXX time-and-sales only around its candidate entries:
+
+```sh
+./build/daytrader orderflow-backtest 30
+```
+
+Use `ytd` to derive the calendar window from January 1 in the configured New
+York time zone. Successful candidate windows are persisted immediately, so an
+interrupted or pacing-limited run resumes from the existing cache:
+
+```sh
+./build/daytrader orderflow-backtest ytd
+```
+
+The classifier combines historical `TRADES` and `BID_ASK`, reports 30-second,
+one-minute, and five-minute DeltaRatio, and distinguishes effective pressure
+from absorption using the price response in SOXX ATR14 units. `ATRx` is the
+completed-bar ATR5/ATR14 ratio, while the signed flow score combines 30-second
+and one-minute Delta, Delta acceleration, and ATR response. The score is a
+diagnostic, not a probability or an active entry gate. Evidence quality remains
+separate and uses classification coverage, direct quote-test coverage, window
+completeness, and trade depth. Raw event samples are cached under
+`data/ibkr/order_flow_ticks/`, so changes to the classifier can be replayed
+without another IBKR request. An asterisk marks a horizon that the bounded
+sample did not fully cover.
 
 ## Runtime configuration
 
