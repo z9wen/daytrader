@@ -46,6 +46,8 @@ void explains_the_revised_backtest_scope()
             "report must state that the broad market is context, not a gate");
     require(contains(rendered, "RTH entries 09:30-15:30 ET"),
             "report must disclose its complete RTH entry window");
+    require(contains(rendered, "each new BUILDING -> STRONG cycle may trade"),
+            "report must disclose the cycle-based re-entry rule");
     require(contains(rendered, "Order Flow is NOT replayed"),
             "report must not imply missing historical flow was confirmed");
     require(contains(rendered, "BEARISH 1 (100.0% win, 0.960% avg)"),

@@ -42,6 +42,41 @@ void require(bool condition, const std::string& message)
     return result;
 }
 
+[[nodiscard]] daytrader::domain::InstrumentBars make_two_wave_session(
+    std::string symbol,
+    double initial_price,
+    double scale,
+    double half_range
+)
+{
+    daytrader::domain::InstrumentBars result{.symbol = std::move(symbol)};
+    double price = initial_price;
+    for (int index = 0; index < 78; ++index) {
+        // First slow advance, a full reset, and a second advance through VWAP.
+        // Scaling preserves the same shape for signal and leveraged ETFs.
+        if (index < 26) {
+            price += 0.005 * scale;
+        } else if (index < 40) {
+            price -= 0.040 * scale;
+        } else if (index < 62) {
+            price += 0.035 * scale;
+        } else {
+            price += 0.005 * scale;
+        }
+        result.bars.push_back(daytrader::domain::MarketBar{
+            .epoch_seconds = session_open + static_cast<std::int64_t>(index * 300),
+            .open = price,
+            .high = price + half_range,
+            .low = price - half_range,
+            .close = price,
+            .volume = 100'000.0,
+            .weighted_average_price = price,
+            .trade_count = 1'000,
+        });
+    }
+    return result;
+}
+
 void enters_on_next_bar_and_closes_the_same_session()
 {
     const std::vector<daytrader::domain::InstrumentBars> instruments{
@@ -60,7 +95,8 @@ void enters_on_next_bar_and_closes_the_same_session()
     }.run(instruments);
 
     require(report.sessions == 1, "expected one RTH session");
-    require(report.trades == 1, "expected exactly one trade per session");
+    require(report.trades == 1,
+            "one uninterrupted STRONG wave must not repeatedly re-enter");
     require(report.wins == 1, "expected the synthetic rising trade to win");
     require(report.trade_log.front().signal_atr_at_entry > 0.0,
             "the SOXX signal ATR should be retained with the trade");
@@ -79,6 +115,32 @@ void enters_on_next_bar_and_closes_the_same_session()
             <= session_open + static_cast<std::int64_t>(77 * 300),
         "day trade must close during the same RTH session"
     );
+}
+
+void allows_a_second_trade_after_a_new_building_cycle()
+{
+    const std::vector<daytrader::domain::InstrumentBars> instruments{
+        make_session("SPY", 100.0, 0.0, 0.10),
+        make_session("QQQ", 200.0, 0.0, 0.15),
+        make_two_wave_session("SOXX", 300.0, 1.0, 0.20),
+        make_two_wave_session("SOXL", 50.0, 0.5, 0.10),
+    };
+    const auto report = daytrader::backtest::DayTradeBacktester{
+        daytrader::backtest::DayTradeBacktestSettings{
+            .strategy_name = "two-waves",
+            .initial_stop_atr = 100.0,
+            .trailing_activation_atr = 100.0,
+            .per_side_cost_basis_points = 0.0,
+        }
+    }.run(instruments);
+
+    require(report.trades >= 2,
+            "a new BUILDING -> STRONG cycle should permit another trade; got "
+                + std::to_string(report.trades));
+    require(report.traded_sessions == 1,
+            "both synthetic trades should belong to the same session");
+    require(report.maximum_trades_in_session >= 2,
+            "the report should retain the observed per-session maximum");
 }
 
 void does_not_require_a_bullish_broad_market()
@@ -201,6 +263,7 @@ int main()
 {
     try {
         enters_on_next_bar_and_closes_the_same_session();
+        allows_a_second_trade_after_a_new_building_cycle();
         does_not_require_a_bullish_broad_market();
         can_enter_after_the_old_morning_cutoff();
         supports_qqq_to_tqqq_execution();

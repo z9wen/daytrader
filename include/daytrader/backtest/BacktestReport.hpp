@@ -47,6 +47,8 @@ struct BacktestReport {
     std::string first_session;
     std::string last_session;
     std::size_t sessions{};
+    std::size_t traded_sessions{};
+    std::size_t maximum_trades_in_session{};
     std::size_t trades{};
     std::size_t wins{};
     std::size_t losses{};

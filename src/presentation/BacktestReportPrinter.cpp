@@ -86,8 +86,8 @@ std::string BacktestReportPrinter::render(
               "TQQQ/SOXL's own VWAP/ATR zone.\n"
            << "No hard SPY/QQQ market gate; completed 5-minute signals fill at "
               "the next bar open.\n"
-           << "RTH entries 09:30-15:30 ET, one trade per session, 2 bps cost "
-              "per side.\n"
+           << "RTH entries 09:30-15:30 ET; each new BUILDING -> STRONG cycle "
+              "may trade; 2 bps cost per side.\n"
            << "Order Flow is NOT replayed because full-session historical ticks "
               "are not cached.\n\n";
     output << std::left << std::setw(21) << "strategy"
@@ -119,6 +119,8 @@ std::string BacktestReportPrinter::render(
                << std::setw(11) << std::setprecision(1)
                << report.average_holding_minutes << '\n';
         output << "  period " << report.first_session << " to " << report.last_session
+               << " | trade days " << report.traded_sessions
+               << " | max/day " << report.maximum_trades_in_session
                << " | wins " << report.wins << " | losses " << report.losses
                << " | avg win " << std::setprecision(3) << report.average_win_percent
                << "% | avg loss " << report.average_loss_percent

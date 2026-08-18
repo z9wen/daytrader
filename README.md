@@ -121,8 +121,11 @@ missing symbols. Every successful IBKR batch is persisted immediately.
 The unleveraged ETF determines direction while the leveraged ETF must reach its
 own VWAP/ATR entry zone. The backtest does not require SPY and QQQ to be bullish,
 uses completed five-minute signals, fills at the next bar open, scans the
-09:30-15:30 ET RTH entry window, and allows one trade per session. It reports
-performance together with entry-time and broad-market-context breakdowns.
+09:30-15:30 ET RTH entry window, and allows another trade only after the prior
+wave resets through BUILDING and returns to STRONG. A good session can therefore
+produce two or three distinct trades without repeatedly entering during the
+same uninterrupted STRONG phase. It reports performance together with
+entry-time and broad-market-context breakdowns.
 
 Premarket is not included because the current cache contains RTH bars only.
 Live DeltaRatio/Order Flow is also not replayed unless full-session historical
