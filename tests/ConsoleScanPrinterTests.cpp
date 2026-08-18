@@ -250,6 +250,14 @@ void renders_responsive_industry_pages_without_overflow()
             "common wide terminals should show the focused action column");
     require(!contains(focused.text, "30 S/Q"),
             "the focused view should leave 30-minute RS in the scoring model");
+    require(contains(focused.text, "symbol  RVOL"),
+            "comfortable layout should visibly separate adjacent columns");
+    require(contains(focused.text, "60 S/Q       entry zone"),
+            "comfortable layout should separate signal and execution groups");
+    require(contains(focused.text, "IN_ZONE"),
+            "comfortable layout should retain the complete entry state");
+    require(contains(focused.text, "EXTENDED"),
+            "comfortable layout should retain the complete leveraged state");
 
     const auto narrow = printer.render_page(
         sample_scan(),

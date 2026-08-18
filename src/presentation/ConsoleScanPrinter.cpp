@@ -22,6 +22,7 @@ namespace {
 enum class RotationLayout {
     minimal,
     compact,
+    comfortable,
     regular,
 };
 
@@ -178,6 +179,9 @@ struct ResponsiveRank {
     if (columns >= 180) {
         return RotationLayout::regular;
     }
+    if (columns >= 150) {
+        return RotationLayout::comfortable;
+    }
     if (columns >= 116) {
         return RotationLayout::compact;
     }
@@ -226,6 +230,23 @@ void print_responsive_rotation_header(
                << ' ' << std::setw(5) << "score"
                << ' ' << std::setw(8) << "entry"
                << ' ' << std::setw(7) << "if held" << '\n';
+        return;
+    }
+
+    if (layout == RotationLayout::comfortable) {
+        output << std::left << std::setw(6) << "symbol"
+               << "  " << std::setw(7) << "RVOL"
+               << "  " << std::setw(7) << "VWAP st"
+               << "  " << std::setw(10) << "15 S/Q"
+               << "  " << std::setw(10) << "60 S/Q"
+               << "   " << std::setw(16) << "entry zone"
+               << "  " << std::setw(10) << "entry state"
+               << "   " << std::setw(6) << "long"
+               << "  " << std::setw(16) << "leveraged zone"
+               << "  " << std::setw(10) << "lev state"
+               << "   " << std::setw(10) << "phase"
+               << "  " << std::setw(6) << "score"
+               << "  " << std::setw(12) << "entry/held" << '\n';
         return;
     }
 
@@ -296,6 +317,38 @@ void print_responsive_rotation_rank(
                << fit_text(domain::to_string(rank.long_opportunity.entry), 8)
                << ' ' << std::setw(7)
                << fit_text(domain::to_string(rank.long_opportunity.if_held), 7)
+               << '\n';
+        return;
+    }
+
+    if (layout == RotationLayout::comfortable) {
+        output << std::left << std::setw(6) << fit_text(rank.symbol, 6)
+               << "  " << std::right << std::setw(7)
+               << fit_text(ratio_text(rank.relative_volume.bar_ratio), 7)
+               << "  " << std::setw(7)
+               << fit_text(domain::to_string(rank.vwap_structure), 7)
+               << "  " << std::setw(10) << fit_text(rs_pair_text(
+                      rank.relative_strength_vs_spy.fifteen_minute_percent,
+                      rank.relative_strength_vs_qqq.fifteen_minute_percent
+                  ), 10)
+               << "  " << std::setw(10) << fit_text(rs_pair_text(
+                      rank.relative_strength_vs_spy.sixty_minute_percent,
+                      rank.relative_strength_vs_qqq.sixty_minute_percent
+                  ), 10)
+               << "   " << std::setw(16) << compact_zone_text(rank.entry_zone, 16)
+               << "  " << std::setw(10)
+               << fit_text(entry_zone_state(rank.entry_zone), 10)
+               << "   " << std::setw(6)
+               << fit_text(symbol_or_dash(rank.leveraged_long_symbol), 6)
+               << "  " << std::setw(16)
+               << compact_zone_text(rank.leveraged_entry_zone, 16)
+               << "  " << std::setw(10)
+               << fit_text(entry_zone_state(rank.leveraged_entry_zone), 10)
+               << "   " << std::setw(10)
+               << fit_text(domain::to_string(rank.long_opportunity.phase), 10)
+               << "  " << std::setw(6) << rank.long_opportunity.bullish_score
+               << "  " << std::setw(12)
+               << fit_text(compact_action_text(rank.long_opportunity), 12)
                << '\n';
         return;
     }
