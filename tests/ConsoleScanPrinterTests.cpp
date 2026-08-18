@@ -153,6 +153,16 @@ void renders_responsive_industry_pages_without_overflow()
     require(last.page_index == first.page_count - 1,
             "the final responsive page should be reachable");
     require(last.text != first.text, "different pages should show different rows");
+
+    const auto regular = printer.render_page(
+        sample_scan(),
+        DashboardTab::industries,
+        DashboardViewport{.columns = 156, .rows = 20, .requested_page = 0}
+    );
+    require(contains(regular.text, "entry zone  entry state"),
+            "entry zone and state headers should have a stable visible gap");
+    require(!contains(regular.text, "|entry"),
+            "responsive headers should not attach a separator to entry state");
 }
 
 } // namespace
