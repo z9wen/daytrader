@@ -28,15 +28,18 @@ regime contributes to the score as risk context, but a bearish market does not
 force an independently strong industry to `WEAK` or every held position to
 `EXIT`.
 
-The terminal has four pages: market context (`SPY`, `QQQ`, `TQQQ` execution,
-and optional `VIX`),
-the eleven standard sector ETFs, twenty industry ETFs, and a live trade page.
+The terminal has five pages: market context (`SPY`, `QQQ`, `TQQQ` execution,
+and optional `VIX`), the eleven standard sector ETFs, twenty industry ETFs,
+an industry-derived long-leveraged ETF watchlist, and a live trade page. The
+leveraged page keeps mappings such as `SOXX` to `SOXL`, the leveraged price and
+entry zone, while the Industries page remains focused on the signal ETFs.
 The trade page filters the IBKR account to positions in the configured signal
 and long-leveraged ETF universe, so long-term bond or income holdings do not
 appear as day trades. It shows average cost, mark, unrealized P&L,
 process-observed peak MFE and profit giveback, plus rolling
 30/60-second DeltaRatio for QQQ and SOXX, ATR-normalized pressure state, and
-evidence quality. Press `Tab` or `1`/`2`/`3`/`4` to switch pages. Interactive
+evidence quality. Press `Tab`, Left/Right, or `1`/`2`/`3`/`4`/`5` to switch
+pages. Interactive
 tables automatically select a regular, compact, or minimal column set from the
 current terminal width. Rotation rows
 are separated into clearly labeled `STRONG`, `NEUTRAL`, and `WEAK` sections and

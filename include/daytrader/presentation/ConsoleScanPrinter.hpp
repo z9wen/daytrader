@@ -12,6 +12,7 @@ enum class DashboardTab {
     market,
     sectors,
     industries,
+    leveraged,
     trade,
 };
 

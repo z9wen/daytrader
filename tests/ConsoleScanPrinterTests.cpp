@@ -65,6 +65,7 @@ void require(bool condition, const std::string& message)
             .symbol = std::move(leveraged_symbol),
             .lower_price = 149.0,
             .upper_price = 150.0,
+            .current_price = 149.75,
             .state = daytrader::domain::EntryZoneState::extended,
         },
     };
@@ -165,15 +166,24 @@ void renders_independent_tabs_and_column_order()
     const auto industries = printer.render(scan, DashboardTab::industries);
     require(contains(industries, "INDUSTRY ROTATION"), "industry tab should show industries");
     require(contains(industries, "SOXX"), "industry tab should contain SOXX");
+    require(!contains(industries, "leveraged entry zone"),
+            "industry tab should leave leveraged execution columns to tab 4");
     const auto entry_zone = industries.find("entry zone");
     const auto entry_state = industries.find("entry state", entry_zone);
-    const auto leveraged_zone = industries.find("leveraged entry zone", entry_state);
-    const auto leveraged_state = industries.find("leveraged state", leveraged_zone);
-    require(
-        entry_zone < entry_state && entry_state < leveraged_zone
-            && leveraged_zone < leveraged_state,
-        "entry and leveraged columns should follow the requested order"
-    );
+    require(entry_zone < entry_state,
+            "industry entry zone and state should retain their requested order");
+
+    const auto leveraged = printer.render(scan, DashboardTab::leveraged);
+    require(contains(leveraged, "LEVERAGED ETF WATCHLIST"),
+            "leveraged tab should have its own watchlist title");
+    require(contains(leveraged, "SOXX"),
+            "leveraged tab should identify the signal ETF");
+    require(contains(leveraged, "SOXL"),
+            "leveraged tab should identify the long leveraged ETF");
+    require(contains(leveraged, "149.00-150.00"),
+            "leveraged tab should show the leveraged entry zone");
+    require(contains(leveraged, "149.75"),
+            "leveraged tab should show the leveraged current price");
 }
 
 void renders_responsive_industry_pages_without_overflow()
@@ -248,16 +258,28 @@ void renders_responsive_industry_pages_without_overflow()
     );
     require(contains(focused.text, "entry/held"),
             "common wide terminals should show the focused action column");
-    require(!contains(focused.text, "30 S/Q"),
-            "the focused view should leave 30-minute RS in the scoring model");
+    require(contains(focused.text, "30 S/Q"),
+            "the industry view should restore 30-minute RS after removing leverage columns");
     require(contains(focused.text, "symbol  RVOL"),
             "comfortable layout should visibly separate adjacent columns");
     require(contains(focused.text, "60 S/Q       entry zone"),
             "comfortable layout should separate signal and execution groups");
     require(contains(focused.text, "IN_ZONE"),
             "comfortable layout should retain the complete entry state");
-    require(contains(focused.text, "EXTENDED"),
-            "comfortable layout should retain the complete leveraged state");
+    require(!contains(focused.text, "leveraged zone"),
+            "industry layout should no longer include leveraged columns");
+
+    const auto leveraged = printer.render_page(
+        sample_scan(),
+        DashboardTab::leveraged,
+        DashboardViewport{.columns = 163, .rows = 20, .requested_page = 0}
+    );
+    require(contains(leveraged.text, "LEVERAGED ETF WATCHLIST"),
+            "responsive tab 4 should render the leveraged watchlist");
+    require(contains(leveraged.text, "SOXX") && contains(leveraged.text, "SOXL"),
+            "leveraged rows should preserve signal-to-long mappings");
+    require(contains(leveraged.text, "EXTENDED"),
+            "leveraged layout should retain the complete entry state");
 
     const auto narrow = printer.render_page(
         sample_scan(),
