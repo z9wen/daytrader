@@ -30,8 +30,10 @@ force an independently strong industry to `WEAK` or every held position to
 
 The terminal has four pages: market context (`SPY`, `QQQ`, and optional `VIX`),
 the eleven standard sector ETFs, twenty industry ETFs, and a live trade page.
-The trade page shows read-only IBKR positions, average cost, mark, unrealized
-P&L, process-observed peak MFE and profit giveback. It also shows rolling
+The trade page filters the IBKR account to positions in the configured signal
+and long-leveraged ETF universe, so long-term bond or income holdings do not
+appear as day trades. It shows average cost, mark, unrealized P&L,
+process-observed peak MFE and profit giveback, plus rolling
 30/60-second DeltaRatio for QQQ and SOXX, ATR-normalized pressure state, and
 evidence quality. Press `Tab` or `1`/`2`/`3`/`4` to switch pages. Interactive
 tables automatically select a regular, compact, or minimal column set from the

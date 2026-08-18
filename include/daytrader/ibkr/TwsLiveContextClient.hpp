@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace daytrader::ibkr {
@@ -23,6 +24,7 @@ public:
 
     void monitor(
         const std::vector<config::HistoricalDataSettings>& order_flow_symbols,
+        const std::vector<std::string>& position_symbols,
         const std::function<void(domain::LiveTradeContext)>& on_update,
         const std::function<bool()>& stop_requested
     );

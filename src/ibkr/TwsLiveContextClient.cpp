@@ -90,11 +90,12 @@ public:
 
     void monitor(
         const std::vector<config::HistoricalDataSettings>& order_flow_symbols,
+        const std::vector<std::string>& position_symbols,
         const std::function<void(domain::LiveTradeContext)>& on_update,
         const std::function<bool()>& stop_requested
     )
     {
-        prepare(order_flow_symbols, on_update);
+        prepare(order_flow_symbols, position_symbols, on_update);
         if (!stop_requested) {
             throw std::invalid_argument("live-context stop predicate is required");
         }
@@ -145,7 +146,8 @@ public:
         double average_cost
     ) override
     {
-        if (contract.secType != "STK" || position == UNSET_DECIMAL) {
+        if (contract.secType != "STK" || position == UNSET_DECIMAL
+            || !allowed_position_symbols_.contains(contract.symbol)) {
             return;
         }
         const double quantity = DecimalFunctions::decimalToDouble(position);
@@ -400,6 +402,7 @@ private:
 
     void prepare(
         const std::vector<config::HistoricalDataSettings>& order_flow_symbols,
+        const std::vector<std::string>& position_symbols,
         const std::function<void(domain::LiveTradeContext)>& on_update
     )
     {
@@ -408,6 +411,9 @@ private:
         }
         if (order_flow_symbols.empty()) {
             throw std::invalid_argument("at least one live Order Flow symbol is required");
+        }
+        if (position_symbols.empty()) {
+            throw std::invalid_argument("day-trade position symbol list cannot be empty");
         }
         if (reader_ != nullptr || client_.isConnected()) {
             throw std::logic_error("live-context client is already running");
@@ -429,6 +435,11 @@ private:
             );
         }
         update_handler_ = on_update;
+        allowed_position_symbols_.clear();
+        allowed_position_symbols_.insert(
+            position_symbols.begin(),
+            position_symbols.end()
+        );
         request_to_tracker_.clear();
         pnl_requests_.clear();
         position_to_pnl_request_.clear();
@@ -562,6 +573,7 @@ private:
     std::unordered_map<std::string, int> position_to_pnl_request_;
     std::unordered_map<int, PositionMarketState> market_requests_;
     std::unordered_map<std::string, int> position_to_market_request_;
+    std::unordered_set<std::string> allowed_position_symbols_;
     int next_pnl_request_id_{first_pnl_request_id};
     int next_position_market_request_id_{first_position_market_request_id};
     std::function<void(domain::LiveTradeContext)> update_handler_;
@@ -588,11 +600,12 @@ TwsLiveContextClient& TwsLiveContextClient::operator=(
 
 void TwsLiveContextClient::monitor(
     const std::vector<config::HistoricalDataSettings>& order_flow_symbols,
+    const std::vector<std::string>& position_symbols,
     const std::function<void(domain::LiveTradeContext)>& on_update,
     const std::function<bool()>& stop_requested
 )
 {
-    impl_->monitor(order_flow_symbols, on_update, stop_requested);
+    impl_->monitor(order_flow_symbols, position_symbols, on_update, stop_requested);
 }
 
 } // namespace daytrader::ibkr

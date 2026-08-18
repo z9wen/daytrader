@@ -133,12 +133,52 @@ struct ResponsiveRank {
     return "?";
 }
 
+[[nodiscard]] std::string compact_action_text(
+    const domain::LongOpportunity& opportunity
+)
+{
+    std::string_view entry;
+    switch (opportunity.entry) {
+    case domain::LongEntryDecision::watch:
+        entry = "WATCH";
+        break;
+    case domain::LongEntryDecision::wait_for_vwap:
+        entry = "WAIT";
+        break;
+    case domain::LongEntryDecision::ready:
+        entry = "READY";
+        break;
+    case domain::LongEntryDecision::avoid:
+        entry = "AVOID";
+        break;
+    }
+
+    std::string_view held;
+    switch (opportunity.if_held) {
+    case domain::HoldingGuidance::hold:
+        held = "HOLD";
+        break;
+    case domain::HoldingGuidance::protect:
+        held = "PROT";
+        break;
+    case domain::HoldingGuidance::trim:
+        held = "TRIM";
+        break;
+    case domain::HoldingGuidance::exit:
+        held = "EXIT";
+        break;
+    }
+    return std::string{entry} + '/' + std::string{held};
+}
+
 [[nodiscard]] RotationLayout rotation_layout(std::size_t columns)
 {
-    if (columns >= 148) {
+    // The full diagnostic view is useful on genuinely wide terminals. At the
+    // common 150-170 column size, a focused execution view is easier to scan.
+    if (columns >= 180) {
         return RotationLayout::regular;
     }
-    if (columns >= 104) {
+    if (columns >= 116) {
         return RotationLayout::compact;
     }
     return RotationLayout::minimal;
@@ -201,7 +241,8 @@ void print_responsive_rotation_header(
                << ' ' << std::setw(13) << "lev zone"
                << ' ' << std::setw(6) << "state"
                << ' ' << std::setw(8) << "phase"
-               << ' ' << std::setw(5) << "score" << '\n';
+               << ' ' << std::setw(5) << "score"
+               << ' ' << std::setw(10) << "entry/held" << '\n';
         return;
     }
 
@@ -284,6 +325,8 @@ void print_responsive_rotation_rank(
                << ' ' << std::setw(8)
                << fit_text(domain::to_string(rank.long_opportunity.phase), 8)
                << ' ' << std::setw(5) << rank.long_opportunity.bullish_score
+               << ' ' << std::setw(10)
+               << fit_text(compact_action_text(rank.long_opportunity), 10)
                << '\n';
         return;
     }
@@ -681,11 +724,11 @@ void print_trade_section(
         output << "Live context is connecting on the secondary IBKR client\n";
     }
 
-    output << "\nPOSITIONS\n";
+    output << "\nDAY-TRADE POSITIONS (configured signal and long-leveraged ETFs only)\n";
     if (!context.positions_ready) {
         output << "Waiting for the initial IBKR position snapshot\n";
     } else if (context.positions.empty()) {
-        output << "No open stock positions\n";
+        output << "No open day-trade positions\n";
     } else {
         if (compact) {
             output << std::left << std::setw(6) << "symbol"

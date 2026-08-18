@@ -92,6 +92,19 @@ void default_universe_is_complete_and_self_contained()
     require(!monitoring_symbols.contains("SQQQ"), "SQQQ must remain reference-only");
     require(!monitoring_symbols.contains("DRIP"), "DRIP must remain reference-only");
     require(!monitoring_symbols.contains("SPXL"), "SPXL is not used by a displayed entry zone");
+
+    const auto position_symbols = daytrader::universe::day_trade_position_symbols(etfs);
+    const std::unordered_set<std::string> position_set{
+        position_symbols.begin(),
+        position_symbols.end(),
+    };
+    require(position_set.contains("QQQ"), "QQQ should be a day-trade position");
+    require(position_set.contains("TQQQ"), "TQQQ should be a day-trade position");
+    require(position_set.contains("SOXX"), "SOXX should be a day-trade position");
+    require(position_set.contains("SOXL"), "SOXL should be a day-trade position");
+    require(!position_set.contains("SOXS"), "inverse ETFs should remain reference-only");
+    require(!position_set.contains("SPXL"), "undisplayed SPXL should remain outside positions");
+    require(!position_set.contains("SHYG"), "portfolio bond ETFs must not become day trades");
 }
 
 } // namespace

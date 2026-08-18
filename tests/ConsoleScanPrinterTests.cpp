@@ -209,7 +209,7 @@ void renders_responsive_industry_pages_without_overflow()
     const auto regular = printer.render_page(
         sample_scan(),
         DashboardTab::industries,
-        DashboardViewport{.columns = 156, .rows = 20, .requested_page = 0}
+        DashboardViewport{.columns = 200, .rows = 20, .requested_page = 0}
     );
     require(contains(regular.text, "entry zone"),
             "regular layout should retain the entry-zone column");
@@ -219,6 +219,16 @@ void renders_responsive_industry_pages_without_overflow()
             "responsive headers should not attach a separator to entry state");
     require(contains(regular.text, "15 S/Q"),
             "regular rows should expose SPY/QQQ multi-period RS pairs");
+
+    const auto focused = printer.render_page(
+        sample_scan(),
+        DashboardTab::industries,
+        DashboardViewport{.columns = 163, .rows = 20, .requested_page = 0}
+    );
+    require(contains(focused.text, "entry/held"),
+            "common wide terminals should show the focused action column");
+    require(!contains(focused.text, "30 S/Q"),
+            "the focused view should leave 30-minute RS in the scoring model");
 
     const auto narrow = printer.render_page(
         sample_scan(),

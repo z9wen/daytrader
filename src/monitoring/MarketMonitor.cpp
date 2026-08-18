@@ -74,6 +74,9 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
             live_requests.push_back(etf.market_data);
         }
     }
+    const auto day_trade_position_symbols = universe::day_trade_position_symbols(
+        config_.etfs
+    );
 
     dashboard.start();
     std::cout << "Continuous monitoring enabled: scan after each completed "
@@ -90,6 +93,7 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
                 ibkr::TwsLiveContextClient client{settings};
                 client.monitor(
                     live_requests,
+                    day_trade_position_symbols,
                     [&](domain::LiveTradeContext context) {
                         live_context_store.update(std::move(context));
                     },
