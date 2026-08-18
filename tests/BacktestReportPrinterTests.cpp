@@ -29,6 +29,7 @@ void explains_the_revised_backtest_scope()
             daytrader::backtest::TradeRecord{
                 .session_date = "2024-01-02",
                 .market_regime_at_entry = daytrader::domain::MarketRegime::bearish,
+                .trade_number_in_session = 1,
                 .entry_timestamp = 1'704'205'800,
                 .exit_timestamp = 1'704'206'100,
                 .entry_price = 50.0,
@@ -44,16 +45,18 @@ void explains_the_revised_backtest_scope()
 
     require(contains(rendered, "No hard SPY/QQQ market gate"),
             "report must state that the broad market is context, not a gate");
-    require(contains(rendered, "RTH entries 09:30-15:30 ET"),
+    require(contains(rendered, "RTH signals 09:30-15:30 ET"),
             "report must disclose its complete RTH entry window");
-    require(contains(rendered, "each new BUILDING -> STRONG cycle may trade"),
-            "report must disclose the cycle-based re-entry rule");
+    require(contains(rendered, "one primary trade plus at most one optional"),
+            "report must disclose the optional second-trade rule");
     require(contains(rendered, "Order Flow is NOT replayed"),
             "report must not imply missing historical flow was confirmed");
     require(contains(rendered, "BEARISH 1 (100.0% win, 0.960% avg)"),
             "report should expose bearish-context outcomes separately");
     require(contains(rendered, "OPEN 1 (100.0% win, 0.960% avg)"),
             "report should expose entry-time outcomes separately");
+    require(contains(rendered, "PRIMARY 1 (100.0% win, 0.960% avg)"),
+            "report should separate the normal first trade from re-entry");
 }
 
 } // namespace

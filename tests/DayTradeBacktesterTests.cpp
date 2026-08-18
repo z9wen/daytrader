@@ -134,13 +134,35 @@ void allows_a_second_trade_after_a_new_building_cycle()
         }
     }.run(instruments);
 
-    require(report.trades >= 2,
+    require(report.trades == 2,
             "a new BUILDING -> STRONG cycle should permit another trade; got "
                 + std::to_string(report.trades));
     require(report.traded_sessions == 1,
             "both synthetic trades should belong to the same session");
-    require(report.maximum_trades_in_session >= 2,
+    require(report.maximum_trades_in_session == 2,
             "the report should retain the observed per-session maximum");
+}
+
+void can_model_the_usual_primary_trade_only()
+{
+    const std::vector<daytrader::domain::InstrumentBars> instruments{
+        make_session("SPY", 100.0, 0.0, 0.10),
+        make_session("QQQ", 200.0, 0.0, 0.15),
+        make_two_wave_session("SOXX", 300.0, 1.0, 0.20),
+        make_two_wave_session("SOXL", 50.0, 0.5, 0.10),
+    };
+    const auto report = daytrader::backtest::DayTradeBacktester{
+        daytrader::backtest::DayTradeBacktestSettings{
+            .strategy_name = "primary-only",
+            .initial_stop_atr = 100.0,
+            .trailing_activation_atr = 100.0,
+            .per_side_cost_basis_points = 0.0,
+            .maximum_trades_per_session = 1,
+        }
+    }.run(instruments);
+
+    require(report.trades == 1,
+            "primary-only mode should ignore an otherwise valid second cycle");
 }
 
 void does_not_require_a_bullish_broad_market()
@@ -264,6 +286,7 @@ int main()
     try {
         enters_on_next_bar_and_closes_the_same_session();
         allows_a_second_trade_after_a_new_building_cycle();
+        can_model_the_usual_primary_trade_only();
         does_not_require_a_bullish_broad_market();
         can_enter_after_the_old_morning_cutoff();
         supports_qqq_to_tqqq_execution();

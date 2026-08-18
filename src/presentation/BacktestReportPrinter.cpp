@@ -86,8 +86,8 @@ std::string BacktestReportPrinter::render(
               "TQQQ/SOXL's own VWAP/ATR zone.\n"
            << "No hard SPY/QQQ market gate; completed 5-minute signals fill at "
               "the next bar open.\n"
-           << "RTH entries 09:30-15:30 ET; each new BUILDING -> STRONG cycle "
-              "may trade; 2 bps cost per side.\n"
+           << "RTH signals 09:30-15:30 ET; one primary trade plus at most one "
+              "optional BUILDING -> STRONG re-entry; 2 bps cost per side.\n"
            << "Order Flow is NOT replayed because full-session historical ticks "
               "are not cached.\n\n";
     output << std::left << std::setw(21) << "strategy"
@@ -131,18 +131,23 @@ std::string BacktestReportPrinter::render(
     for (const auto& report : reports) {
         std::array<SubsetStats, 3> markets{};
         std::array<SubsetStats, 4> periods{};
+        std::array<SubsetStats, 2> trade_order{};
         for (const auto& trade : report.trade_log) {
             auto& market = markets[market_index(trade.market_regime_at_entry)];
             auto& period = periods[entry_period_index(
                 formatter.minutes_since_midnight(trade.entry_timestamp)
             )];
+            auto& order = trade_order[trade.trade_number_in_session == 2 ? 1 : 0];
             ++market.trades;
             ++period.trades;
+            ++order.trades;
             market.net_return_sum += trade.net_return_percent;
             period.net_return_sum += trade.net_return_percent;
+            order.net_return_sum += trade.net_return_percent;
             if (trade.net_return_percent > 0.0) {
                 ++market.wins;
                 ++period.wins;
+                ++order.wins;
             }
         }
         output << "  " << report.strategy_name << " market context: ";
@@ -161,6 +166,11 @@ std::string BacktestReportPrinter::render(
         output << " | ";
         print_subset(output, "AFTERNOON", periods[3]);
         output << '\n';
+        output << "  " << report.strategy_name << " trade order: ";
+        print_subset(output, "PRIMARY", trade_order[0]);
+        output << " | ";
+        print_subset(output, "OPTIONAL_SECOND", trade_order[1]);
+        output << '\n';
     }
 
     for (const auto& report : reports) {
@@ -170,6 +180,7 @@ std::string BacktestReportPrinter::render(
             continue;
         }
         output << std::left << std::setw(12) << "date"
+               << std::setw(4) << "#"
                << std::setw(25) << "entry"
                << std::setw(25) << "exit"
                << std::setw(10) << "market"
@@ -182,6 +193,7 @@ std::string BacktestReportPrinter::render(
             : 0;
         for (const auto& trade : std::span{report.trade_log}.subspan(first)) {
             output << std::left << std::setw(12) << trade.session_date
+                   << std::setw(4) << trade.trade_number_in_session
                    << std::setw(25) << formatter.format(trade.entry_timestamp)
                    << std::setw(25) << formatter.format(trade.exit_timestamp)
                    << std::setw(10) << domain::to_string(

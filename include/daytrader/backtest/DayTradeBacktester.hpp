@@ -3,6 +3,7 @@
 #include "daytrader/backtest/BacktestReport.hpp"
 #include "daytrader/domain/InstrumentBars.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -27,6 +28,9 @@ struct DayTradeBacktestSettings {
     double trailing_activation_atr{0.75};
     double trailing_distance_atr{0.75};
     double per_side_cost_basis_points{2.0};
+    // The first trade is primary. A second trade is optional and requires a
+    // fresh BUILDING -> STRONG cycle after the first position has closed.
+    std::size_t maximum_trades_per_session{2};
     // Older bars may still be supplied as indicator warm-up, but they cannot
     // create trades or inflate the reported number of tested sessions.
     std::optional<std::int64_t> earliest_entry_timestamp;

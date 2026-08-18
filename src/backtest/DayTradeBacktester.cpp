@@ -41,6 +41,7 @@ struct PendingEntry {
 struct Position {
     std::string session_date;
     domain::MarketRegime market_regime_at_entry{domain::MarketRegime::neutral};
+    std::size_t trade_number_in_session{};
     std::int64_t entry_timestamp{};
     double signal_entry_price{};
     double entry_price{};
@@ -221,6 +222,7 @@ void append_trade(
     report.trade_log.push_back(TradeRecord{
         .session_date = position.session_date,
         .market_regime_at_entry = position.market_regime_at_entry,
+        .trade_number_in_session = position.trade_number_in_session,
         .entry_timestamp = position.entry_timestamp,
         .exit_timestamp = exit_timestamp,
         .signal_entry_price = position.signal_entry_price,
@@ -333,6 +335,9 @@ DayTradeBacktester::DayTradeBacktester(DayTradeBacktestSettings settings)
     if (settings_.per_side_cost_basis_points < 0.0) {
         throw std::invalid_argument("backtest trading cost cannot be negative");
     }
+    if (settings_.maximum_trades_per_session == 0) {
+        throw std::invalid_argument("backtest must allow at least one trade per session");
+    }
 }
 
 BacktestReport DayTradeBacktester::run(
@@ -387,10 +392,10 @@ BacktestReport DayTradeBacktester::run(
     std::optional<Position> position;
     std::optional<domain::MarketBar> previous_trade_bar;
     std::string current_session;
-    // The first setup of a session is eligible immediately. After a fill, a
-    // fresh BUILDING phase must appear before another STRONG setup can enter;
-    // this permits multiple distinct waves without churning inside one wave.
+    // The first setup is primary. One optional re-entry can be enabled by the
+    // settings, but it must re-arm through a fresh BUILDING phase first.
     bool entry_armed{true};
+    std::size_t trades_this_session{};
 
     for (const auto timestamp : timestamps) {
         for (std::size_t index = 0; index < indexes.size(); ++index) {
@@ -424,6 +429,7 @@ BacktestReport DayTradeBacktester::run(
             pending_entry.reset();
             pending_exit.reset();
             entry_armed = true;
+            trades_this_session = 0;
         }
         current_session = session;
 
@@ -446,6 +452,7 @@ BacktestReport DayTradeBacktester::run(
                 position = Position{
                     .session_date = session,
                     .market_regime_at_entry = pending_entry->market_regime,
+                    .trade_number_in_session = trades_this_session + 1,
                     .entry_timestamp = timestamp,
                     .signal_entry_price = signal_bar.open,
                     .entry_price = trade_bar.open,
@@ -460,6 +467,7 @@ BacktestReport DayTradeBacktester::run(
                     .peak_price = trade_bar.open,
                     .trough_price = trade_bar.open,
                 };
+                ++trades_this_session;
                 entry_armed = false;
             }
             pending_entry.reset();
@@ -550,6 +558,7 @@ BacktestReport DayTradeBacktester::run(
                 }
             }
         } else if (in_test_window && !pending_entry.has_value()
+                   && trades_this_session < settings_.maximum_trades_per_session
                    && minute >= settings_.entry_start_minute
                    && minute <= settings_.entry_end_minute
                    && rank->entry_zone.has_value()

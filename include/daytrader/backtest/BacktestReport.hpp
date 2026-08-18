@@ -22,6 +22,7 @@ enum class ExitReason {
 struct TradeRecord {
     std::string session_date;
     domain::MarketRegime market_regime_at_entry{domain::MarketRegime::neutral};
+    std::size_t trade_number_in_session{};
     std::int64_t entry_timestamp{};
     std::int64_t exit_timestamp{};
     double signal_entry_price{};
