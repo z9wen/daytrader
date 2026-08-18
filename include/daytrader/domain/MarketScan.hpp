@@ -163,6 +163,9 @@ struct MarketScan {
     std::size_t aligned_market_bar_count{};
     EtfSnapshot spy;
     EtfSnapshot qqq;
+    // QQQ remains the direction input; TQQQ is optional execution context.
+    std::optional<EtfSnapshot> tqqq;
+    std::optional<EntryZone> tqqq_entry_zone;
     std::optional<VolatilitySnapshot> vix;
     MarketRegime market_regime{MarketRegime::neutral};
     std::vector<RankedEtf> sector_rankings;

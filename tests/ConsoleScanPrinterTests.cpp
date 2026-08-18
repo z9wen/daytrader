@@ -77,6 +77,25 @@ void require(bool condition, const std::string& message)
         .aligned_market_bar_count = 40,
         .spy = daytrader::domain::EtfSnapshot{.symbol = "SPY", .close = 500.0},
         .qqq = daytrader::domain::EtfSnapshot{.symbol = "QQQ", .close = 450.0},
+        .tqqq = daytrader::domain::EtfSnapshot{
+            .symbol = "TQQQ",
+            .close = 80.0,
+            .session_vwap = 79.5,
+            .vwap_structure = daytrader::domain::VwapStructureState::above_rising,
+            .relative_volume = daytrader::domain::RelativeVolumeSnapshot{
+                .bar_ratio = 1.3,
+                .cumulative_ratio = 1.1,
+                .baseline_sessions = 20,
+                .state = daytrader::domain::RelativeVolumeState::expanding,
+            },
+            .trend_signal = daytrader::domain::MarketTrendSignal::strong,
+        },
+        .tqqq_entry_zone = daytrader::domain::EntryZone{
+            .symbol = "TQQQ",
+            .lower_price = 79.4,
+            .upper_price = 79.6,
+            .state = daytrader::domain::EntryZoneState::extended,
+        },
         .vix = daytrader::domain::VolatilitySnapshot{
             .close = 18.0,
             .ema20 = 17.5,
@@ -125,7 +144,9 @@ void renders_independent_tabs_and_column_order()
     const auto scan = sample_scan();
 
     const auto market = printer.render(scan, DashboardTab::market);
-    require(contains(market, "MARKET ETFs"), "market tab should show market ETFs");
+    require(contains(market, "MARKET DIRECTION"), "market tab should show direction ETFs");
+    require(contains(market, "TQQQ EXECUTION"), "market tab should show TQQQ execution");
+    require(contains(market, "79.40-79.60"), "market tab should show the TQQQ entry zone");
     require(contains(market, "VIX RISK REFERENCE"), "market tab should show VIX context");
     require(contains(market, "RISING"), "market tab should show the VIX trend");
     require(!contains(market, "SECTOR ROTATION"), "market tab should not show sectors");

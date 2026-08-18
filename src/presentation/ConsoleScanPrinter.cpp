@@ -470,20 +470,42 @@ void print_responsive_rotation_rank(
 
 void print_market_snapshot(std::ostream& output, const domain::EtfSnapshot& snapshot)
 {
-    output << std::left << std::setw(8) << snapshot.symbol
-           << std::right << std::setw(12) << std::fixed << std::setprecision(2)
+    output << std::left << std::setw(6) << snapshot.symbol
+           << ' ' << std::right << std::setw(9) << std::fixed << std::setprecision(2)
            << snapshot.close;
     if (snapshot.session_vwap.has_value()) {
-        output << std::setw(12) << *snapshot.session_vwap;
+        output << ' ' << std::setw(9) << *snapshot.session_vwap;
     } else {
-        output << std::setw(12) << '-';
+        output << ' ' << std::setw(9) << '-';
     }
-    output << std::setw(10) << domain::to_string(snapshot.vwap_structure)
-           << std::setw(9) << ratio_text(snapshot.relative_volume.bar_ratio)
-           << std::setw(9) << ratio_text(snapshot.relative_volume.cumulative_ratio)
-           << std::setw(12) << snapshot.ema20
-           << std::setw(12) << std::setprecision(4) << snapshot.ema20_change_percent
-           << std::setw(10) << domain::to_string(snapshot.trend_signal)
+    output << ' ' << std::setw(7) << domain::to_string(snapshot.vwap_structure)
+           << ' ' << std::setw(6) << ratio_text(snapshot.relative_volume.bar_ratio)
+           << ' ' << std::setw(6) << ratio_text(snapshot.relative_volume.cumulative_ratio)
+           << ' ' << std::setw(8) << std::setprecision(4)
+           << snapshot.ema20_change_percent
+           << ' ' << std::setw(7) << domain::to_string(snapshot.trend_signal)
+           << '\n';
+}
+
+void print_tqqq_execution(
+    std::ostream& output,
+    const domain::EtfSnapshot& snapshot,
+    const std::optional<domain::EntryZone>& entry_zone
+)
+{
+    output << std::left << std::setw(6) << fit_text(snapshot.symbol, 6)
+           << ' ' << std::right << std::fixed << std::setprecision(2)
+           << std::setw(9) << snapshot.close;
+    if (snapshot.session_vwap.has_value()) {
+        output << ' ' << std::setw(9) << *snapshot.session_vwap;
+    } else {
+        output << ' ' << std::setw(9) << '-';
+    }
+    output << ' ' << std::setw(7) << domain::to_string(snapshot.vwap_structure)
+           << ' ' << std::setw(6) << ratio_text(snapshot.relative_volume.bar_ratio)
+           << ' ' << std::setw(15) << compact_zone_text(entry_zone, 15)
+           << ' ' << std::setw(10) << fit_text(entry_zone_state(entry_zone), 10)
+           << ' ' << std::setw(7) << domain::to_string(snapshot.trend_signal)
            << '\n';
 }
 
@@ -673,18 +695,32 @@ void print_scan_header(
 
 void print_market_section(std::ostream& output, const domain::MarketScan& scan)
 {
-    output << "MARKET ETFs (VWAP + EMA20 trend signal)\n";
-    output << std::left << std::setw(8) << "symbol"
-           << std::right << std::setw(12) << "close"
-           << std::setw(12) << "VWAP"
-           << std::setw(10) << "VWAP st"
-           << std::setw(9) << "RVOL"
-           << std::setw(9) << "cum RVOL"
-           << std::setw(12) << "EMA20"
-           << std::setw(12) << "EMA20 %"
-           << std::setw(10) << "signal" << '\n';
+    output << "MARKET DIRECTION (SPY/QQQ determine context)\n";
+    output << std::left << std::setw(6) << "symbol"
+           << ' ' << std::setw(9) << "close"
+           << ' ' << std::setw(9) << "VWAP"
+           << ' ' << std::setw(7) << "VWAP st"
+           << ' ' << std::setw(6) << "RVOL"
+           << ' ' << std::setw(6) << "cRVOL"
+           << ' ' << std::setw(8) << "EMA20 %"
+           << ' ' << std::setw(7) << "signal" << '\n';
     print_market_snapshot(output, scan.spy);
     print_market_snapshot(output, scan.qqq);
+
+    output << "\nTQQQ EXECUTION (not used to determine market regime)\n";
+    if (!scan.tqqq.has_value()) {
+        output << "TQQQ data unavailable\n";
+    } else {
+        output << std::left << std::setw(6) << "symbol"
+               << ' ' << std::setw(9) << "close"
+               << ' ' << std::setw(9) << "VWAP"
+               << ' ' << std::setw(7) << "VWAP st"
+               << ' ' << std::setw(6) << "RVOL"
+               << ' ' << std::setw(15) << "entry zone"
+               << ' ' << std::setw(10) << "state"
+               << ' ' << std::setw(7) << "signal" << '\n';
+        print_tqqq_execution(output, *scan.tqqq, scan.tqqq_entry_zone);
+    }
 
     output << "\nVIX RISK REFERENCE (context only; does not block signals)\n";
     if (!scan.vix.has_value()) {

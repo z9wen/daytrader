@@ -28,7 +28,8 @@ regime contributes to the score as risk context, but a bearish market does not
 force an independently strong industry to `WEAK` or every held position to
 `EXIT`.
 
-The terminal has four pages: market context (`SPY`, `QQQ`, and optional `VIX`),
+The terminal has four pages: market context (`SPY`, `QQQ`, `TQQQ` execution,
+and optional `VIX`),
 the eleven standard sector ETFs, twenty industry ETFs, and a live trade page.
 The trade page filters the IBKR account to positions in the configured signal
 and long-leveraged ETF universe, so long-term bond or income holdings do not

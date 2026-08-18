@@ -83,6 +83,7 @@ void bullish_market_selects_strongest_leveraged_industry()
     auto instruments = std::vector<InstrumentBars>{
         make_bars("SPY", 100.0, 1.0005),
         make_bars("QQQ", 200.0, 1.0010),
+        make_bars("TQQQ", 80.0, 1.0030),
         make_bars("VIX", 16.0, 1.0010),
         make_bars("XLK", 180.0, 1.0020),
         make_bars("XBI", 150.0, 1.0015),
@@ -108,6 +109,16 @@ void bullish_market_selects_strongest_leveraged_industry()
     require(
         scan.qqq.trend_signal == daytrader::domain::MarketTrendSignal::strong,
         "expected a strong QQQ trend signal"
+    );
+    require(scan.tqqq.has_value(), "expected a TQQQ execution snapshot");
+    require(
+        scan.tqqq->trend_signal == daytrader::domain::MarketTrendSignal::strong,
+        "expected a strong TQQQ execution signal"
+    );
+    require(
+        scan.tqqq_entry_zone.has_value()
+            && scan.tqqq_entry_zone->symbol == "TQQQ",
+        "expected a separate TQQQ execution entry zone"
     );
     require(scan.aligned_market_bar_count == 39, "expected timestamp intersection");
     require(scan.vix.has_value(), "expected an optional VIX snapshot");
@@ -156,6 +167,7 @@ void bearish_market_selects_weakest_inverse_industry()
     const auto instruments = std::vector<InstrumentBars>{
         make_bars("SPY", 100.0, 0.9995),
         make_bars("QQQ", 200.0, 0.9990),
+        make_bars("TQQQ", 80.0, 0.9970),
         make_bars("XLK", 180.0, 0.9980),
         make_bars("XBI", 150.0, 0.9985),
         make_bars("SOXX", 300.0, 0.9970),
