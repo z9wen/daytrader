@@ -85,10 +85,10 @@ struct ResponsiveRank {
 
 [[nodiscard]] RotationLayout rotation_layout(std::size_t columns)
 {
-    if (columns >= 132) {
+    if (columns >= 136) {
         return RotationLayout::regular;
     }
-    if (columns >= 96) {
+    if (columns >= 100) {
         return RotationLayout::compact;
     }
     return RotationLayout::minimal;
@@ -126,10 +126,10 @@ void print_responsive_rotation_header(
                << std::setw(9) << "VWAP"
                << std::setw(7) << "RS %"
                << std::setw(18) << "entry zone"
-               << " |" << std::setw(9) << "entry state"
+               << "  " << std::setw(11) << "entry state"
                << std::setw(7) << "long"
                << std::setw(18) << "leveraged zone"
-               << " |" << std::setw(9) << "lev state"
+               << "  " << std::setw(11) << "lev state"
                << std::setw(10) << "phase"
                << std::setw(6) << "score"
                << std::setw(10) << "entry"
@@ -141,10 +141,10 @@ void print_responsive_rotation_header(
         output << std::left << std::setw(6) << "sym"
                << std::right << std::setw(7) << "RS %"
                << std::setw(15) << "entry zone"
-               << " |" << std::setw(6) << "state"
+               << "  " << std::setw(8) << "state"
                << std::setw(6) << "long"
                << std::setw(15) << "lev zone"
-               << " |" << std::setw(6) << "state"
+               << "  " << std::setw(8) << "state"
                << std::setw(9) << "phase"
                << std::setw(5) << "score"
                << std::setw(9) << "entry"
@@ -155,10 +155,10 @@ void print_responsive_rotation_header(
     output << std::left << std::setw(6) << "sym"
            << std::right << std::setw(7) << "RS %"
            << std::setw(14) << "entry zone"
-           << " |" << std::setw(5) << "state"
+           << "  " << std::setw(7) << "state"
            << std::setw(6) << "long"
            << std::setw(14) << "lev zone"
-           << " |" << std::setw(5) << "state"
+           << "  " << std::setw(7) << "state"
            << std::setw(8) << "phase"
            << std::setw(5) << "score" << '\n';
 }
@@ -182,12 +182,12 @@ void print_responsive_rotation_rank(
         output << std::setw(7) << std::setprecision(2)
                << rank.relative_change_60_min_percent
                << std::setw(18) << compact_zone_text(rank.entry_zone, 17)
-               << " |" << std::setw(9)
-               << fit_text(entry_zone_state(rank.entry_zone), 8)
+               << "  " << std::setw(11)
+               << fit_text(entry_zone_state(rank.entry_zone), 10)
                << std::setw(7) << fit_text(symbol_or_dash(rank.leveraged_long_symbol), 6)
                << std::setw(18) << compact_zone_text(rank.leveraged_entry_zone, 17)
-               << " |" << std::setw(9)
-               << fit_text(entry_zone_state(rank.leveraged_entry_zone), 8)
+               << "  " << std::setw(11)
+               << fit_text(entry_zone_state(rank.leveraged_entry_zone), 10)
                << std::setw(10)
                << fit_text(domain::to_string(rank.long_opportunity.phase), 9)
                << std::setw(6) << rank.long_opportunity.bullish_score
@@ -204,12 +204,12 @@ void print_responsive_rotation_rank(
                << std::right << std::fixed << std::setprecision(2)
                << std::setw(7) << rank.relative_change_60_min_percent
                << std::setw(15) << compact_zone_text(rank.entry_zone, 14)
-               << " |" << std::setw(6)
-               << fit_text(compact_zone_state(rank.entry_zone), 5)
+               << "  " << std::setw(8)
+               << fit_text(compact_zone_state(rank.entry_zone), 7)
                << std::setw(6) << fit_text(symbol_or_dash(rank.leveraged_long_symbol), 5)
                << std::setw(15) << compact_zone_text(rank.leveraged_entry_zone, 14)
-               << " |" << std::setw(6)
-               << fit_text(compact_zone_state(rank.leveraged_entry_zone), 5)
+               << "  " << std::setw(8)
+               << fit_text(compact_zone_state(rank.leveraged_entry_zone), 7)
                << std::setw(9)
                << fit_text(domain::to_string(rank.long_opportunity.phase), 8)
                << std::setw(5) << rank.long_opportunity.bullish_score
@@ -225,12 +225,12 @@ void print_responsive_rotation_rank(
            << std::right << std::fixed << std::setprecision(2)
            << std::setw(7) << rank.relative_change_60_min_percent
            << std::setw(14) << compact_zone_text(rank.entry_zone, 13)
-           << " |" << std::setw(5)
-           << fit_text(compact_zone_state(rank.entry_zone), 4)
+           << "  " << std::setw(7)
+           << fit_text(compact_zone_state(rank.entry_zone), 6)
            << std::setw(6) << fit_text(symbol_or_dash(rank.leveraged_long_symbol), 5)
            << std::setw(14) << compact_zone_text(rank.leveraged_entry_zone, 13)
-           << " |" << std::setw(5)
-           << fit_text(compact_zone_state(rank.leveraged_entry_zone), 4)
+           << "  " << std::setw(7)
+           << fit_text(compact_zone_state(rank.leveraged_entry_zone), 6)
            << std::setw(8)
            << fit_text(domain::to_string(rank.long_opportunity.phase), 7)
            << std::setw(5) << rank.long_opportunity.bullish_score << '\n';
