@@ -20,6 +20,11 @@ Each rotation row separates trend from timing:
 - `if held`: `HOLD`, `PROTECT`, `TRIM`, or `EXIT`
 - independent VWAP/ATR entry zones for the signal and leveraged ETFs
 
+Sector and industry phases remain instrument-specific. The SPY/QQQ market
+regime contributes to the score as risk context, but a bearish market does not
+force an independently strong industry to `WEAK` or every held position to
+`EXIT`.
+
 The terminal has three pages: market context (`SPY`, `QQQ`, and optional `VIX`),
 the eleven standard sector ETFs, and twenty industry ETFs. Press `Tab` or
 `1`/`2`/`3` to switch pages. Interactive tables automatically select a regular,

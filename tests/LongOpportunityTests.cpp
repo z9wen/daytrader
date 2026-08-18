@@ -62,11 +62,29 @@ void weak_signal_exits_instead_of_opening()
 
     const auto decision = analysis::LongOpportunityAnalyzer{}.analyze(
         rank,
-        domain::MarketRegime::bearish
+        domain::MarketRegime::bullish
     );
     require(decision.phase == domain::BullishPhase::weak, "expected WEAK phase");
     require(decision.entry == domain::LongEntryDecision::avoid, "weak phase should AVOID");
     require(decision.if_held == domain::HoldingGuidance::exit, "weak phase should EXIT");
+}
+
+void strong_industry_remains_actionable_in_bearish_market()
+{
+    using namespace daytrader;
+    const auto decision = analysis::LongOpportunityAnalyzer{}.analyze(
+        bullish_rank(domain::EntryZoneState::in_zone),
+        domain::MarketRegime::bearish
+    );
+
+    require(decision.bullish_score == 80,
+            "bearish market should withhold its 20-point context bonus");
+    require(decision.phase == domain::BullishPhase::strong,
+            "market direction must not override independent industry strength");
+    require(decision.entry == domain::LongEntryDecision::ready,
+            "independent strength at its VWAP zone should remain actionable");
+    require(decision.if_held == domain::HoldingGuidance::hold,
+            "an independently strong intraday position should remain HOLD");
 }
 
 } // namespace
@@ -76,6 +94,7 @@ int main()
     try {
         strong_signal_separates_ready_from_chasing();
         weak_signal_exits_instead_of_opening();
+        strong_industry_remains_actionable_in_bearish_market();
         std::cout << "LongOpportunityTests passed\n";
         return 0;
     } catch (const std::exception& exception) {

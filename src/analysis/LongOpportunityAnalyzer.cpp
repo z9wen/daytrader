@@ -33,12 +33,13 @@ namespace {
 
 [[nodiscard]] domain::BullishPhase classify_phase(
     const domain::RankedEtf& rank,
-    domain::MarketRegime market_regime,
     int score
 )
 {
-    if (market_regime == domain::MarketRegime::bearish
-        || rank.signal == domain::RelativeStrengthSignal::weak) {
+    // Broad-market direction is already reflected in bullish_score. It must
+    // not override an independently strong industry: intraday leadership can
+    // appear before SPY and QQQ recover. EXIT remains an instrument-level call.
+    if (rank.signal == domain::RelativeStrengthSignal::weak) {
         return domain::BullishPhase::weak;
     }
     if (rank.signal == domain::RelativeStrengthSignal::strong && score >= 80) {
@@ -106,7 +107,7 @@ domain::LongOpportunity LongOpportunityAnalyzer::analyze(
 ) const
 {
     const int score = bullish_score(rank, market_regime);
-    const auto phase = classify_phase(rank, market_regime, score);
+    const auto phase = classify_phase(rank, score);
     return domain::LongOpportunity{
         .bullish_score = score,
         .phase = phase,
