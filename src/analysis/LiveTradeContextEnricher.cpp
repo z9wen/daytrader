@@ -1,5 +1,6 @@
 #include "daytrader/analysis/LiveTradeContextEnricher.hpp"
 
+#include "daytrader/analysis/LeveragedExecutionAnalyzer.hpp"
 #include "daytrader/analysis/OrderFlowSignalAnalyzer.hpp"
 
 #include <optional>
@@ -13,6 +14,32 @@ struct AtrContext {
     double atr{};
     double expansion_ratio{};
 };
+
+[[nodiscard]] const domain::LiveOrderFlowSnapshot* flow_for(
+    const domain::LiveTradeContext& context,
+    const std::string& symbol
+)
+{
+    const auto found = std::ranges::find(
+        context.order_flow,
+        symbol,
+        &domain::LiveOrderFlowSnapshot::symbol
+    );
+    return found == context.order_flow.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] const domain::PositionSnapshot* position_for(
+    const domain::LiveTradeContext& context,
+    const std::string& symbol
+)
+{
+    const auto found = std::ranges::find(
+        context.positions,
+        symbol,
+        &domain::PositionSnapshot::symbol
+    );
+    return found == context.positions.end() ? nullptr : &*found;
+}
 
 [[nodiscard]] std::optional<AtrContext> atr_for(
     const domain::MarketScan& scan,
@@ -45,8 +72,8 @@ struct AtrContext {
 
 } // namespace
 
-domain::LiveTradeContext LiveTradeContextEnricher::enrich(
-    const domain::MarketScan& scan,
+domain::MarketScan LiveTradeContextEnricher::enrich(
+    domain::MarketScan scan,
     domain::LiveTradeContext context
 ) const
 {
@@ -63,7 +90,37 @@ domain::LiveTradeContext LiveTradeContextEnricher::enrich(
             atr->expansion_ratio
         );
     }
-    return context;
+
+    const LeveragedExecutionAnalyzer execution_analyzer;
+    const auto update_rankings = [&](std::vector<domain::RankedEtf>& rankings) {
+        for (auto& rank : rankings) {
+            if (rank.leveraged_long_symbol.empty()) {
+                continue;
+            }
+            const auto* flow = flow_for(context, rank.symbol);
+            rank.leveraged_execution = execution_analyzer.analyze(
+                rank.long_opportunity,
+                rank.leveraged_entry_zone,
+                flow == nullptr ? std::nullopt : flow->assessment,
+                position_for(context, rank.leveraged_long_symbol),
+                rank.symbol == "SOXX"
+            );
+        }
+    };
+    update_rankings(scan.sector_rankings);
+    update_rankings(scan.rankings);
+
+    if (scan.tqqq.has_value()) {
+        const auto* qqq_flow = flow_for(context, "QQQ");
+        scan.tqqq_execution = execution_analyzer.analyze_market(
+            scan.qqq,
+            scan.tqqq_entry_zone,
+            qqq_flow == nullptr ? std::nullopt : qqq_flow->assessment,
+            position_for(context, "TQQQ")
+        );
+    }
+    scan.live_context = std::move(context);
+    return scan;
 }
 
 } // namespace daytrader::analysis

@@ -1,3 +1,4 @@
+#include "daytrader/analysis/LiveTradeContextEnricher.hpp"
 #include "daytrader/analysis/RelativeStrengthAnalyzer.hpp"
 #include "daytrader/analysis/RelativeVolumeAnalyzer.hpp"
 #include "daytrader/analysis/VwapStructureAnalyzer.hpp"
@@ -11,6 +12,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -163,6 +165,70 @@ void builds_complete_live_delta_windows()
                  "aggressive ask trades should produce positive Delta");
 }
 
+void enriches_live_execution_from_signal_flow_and_position()
+{
+    using namespace daytrader;
+    auto scan = domain::MarketScan{
+        .qqq = domain::EtfSnapshot{
+            .symbol = "QQQ",
+            .trend_signal = domain::MarketTrendSignal::strong,
+        },
+        .tqqq = domain::EtfSnapshot{.symbol = "TQQQ"},
+        .tqqq_entry_zone = domain::EntryZone{
+            .symbol = "TQQQ",
+            .state = domain::EntryZoneState::in_zone,
+        },
+        .rankings = {domain::RankedEtf{
+            .symbol = "SOXX",
+            .leveraged_long_symbol = "SOXL",
+            .leveraged_entry_zone = domain::EntryZone{
+                .symbol = "SOXL",
+                .state = domain::EntryZoneState::in_zone,
+            },
+            .long_opportunity = domain::LongOpportunity{
+                .bullish_score = 90,
+                .phase = domain::BullishPhase::strong,
+                .entry = domain::LongEntryDecision::wait_for_vwap,
+                .if_held = domain::HoldingGuidance::hold,
+            },
+        }},
+    };
+    const auto buying = domain::OrderFlowAssessment{
+        .evidence_quality_percent = 80.0,
+        .pressure = domain::OrderFlowPressureState::buying_effective,
+    };
+    auto context = domain::LiveTradeContext{
+        .positions = {domain::PositionSnapshot{
+            .symbol = "SOXL",
+            .quantity = 100.0,
+            .average_cost = 50.0,
+            .unrealized_pnl = 300.0,
+            .peak_unrealized_pnl = 500.0,
+            .giveback_amount = 200.0,
+            .giveback_percent = 40.0,
+        }},
+        .order_flow = {
+            domain::LiveOrderFlowSnapshot{.symbol = "QQQ", .assessment = buying},
+            domain::LiveOrderFlowSnapshot{.symbol = "SOXX", .assessment = buying},
+        },
+    };
+
+    const auto enriched = analysis::LiveTradeContextEnricher{}.enrich(
+        std::move(scan),
+        std::move(context)
+    );
+    require(enriched.tqqq_execution.has_value()
+                && enriched.tqqq_execution->entry
+                    == domain::LongEntryDecision::ready,
+            "QQQ flow and TQQQ zone should be wired into live READY");
+    require(enriched.rankings[0].leveraged_execution.entry
+                == domain::LongEntryDecision::ready,
+            "SOXX flow and SOXL zone should be wired into live READY");
+    require(enriched.rankings[0].leveraged_execution.if_held
+                == domain::HoldingGuidance::trim,
+            "SOXL MFE giveback should be wired into live TRIM guidance");
+}
+
 } // namespace
 
 int main()
@@ -173,6 +239,7 @@ int main()
         compares_volume_with_same_time_prior_sessions();
         tracks_position_mfe_and_giveback();
         builds_complete_live_delta_windows();
+        enriches_live_execution_from_signal_flow_and_position();
         std::cout << "LiveTradeContextTests passed\n";
         return 0;
     } catch (const std::exception& exception) {

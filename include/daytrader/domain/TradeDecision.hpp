@@ -19,6 +19,7 @@ enum class LongEntryDecision {
     avoid,
     watch,
     wait_for_vwap,
+    wait_for_flow,
     ready,
 };
 
@@ -35,6 +36,14 @@ enum class HoldingGuidance {
 struct LongOpportunity {
     int bullish_score{};
     BullishPhase phase{BullishPhase::neutral};
+    LongEntryDecision entry{LongEntryDecision::avoid};
+    HoldingGuidance if_held{HoldingGuidance::protect};
+};
+
+// Final action for a leveraged execution instrument. Signal phase/score remain
+// on the unleveraged ETF; this layer combines the trade ETF's own entry zone,
+// live Order Flow confirmation, and position profit protection.
+struct LeveragedExecutionDecision {
     LongEntryDecision entry{LongEntryDecision::avoid};
     HoldingGuidance if_held{HoldingGuidance::protect};
 };
@@ -65,6 +74,8 @@ struct LongOpportunity {
         return "WATCH";
     case LongEntryDecision::wait_for_vwap:
         return "WAIT_VWAP";
+    case LongEntryDecision::wait_for_flow:
+        return "WAIT_FLOW";
     case LongEntryDecision::ready:
         return "READY";
     }

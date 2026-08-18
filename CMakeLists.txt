@@ -88,6 +88,7 @@ add_library(daytrader_core
     src/analysis/EtfSnapshotCalculator.cpp
     src/analysis/LongOpportunityAnalyzer.cpp
     src/analysis/LiveTradeContextEnricher.cpp
+    src/analysis/LeveragedExecutionAnalyzer.cpp
     src/analysis/MarketRegimeAnalyzer.cpp
     src/analysis/MarketScanner.cpp
     src/analysis/OrderFlowAggregator.cpp
@@ -122,6 +123,7 @@ add_library(daytrader_core
     src/presentation/BacktestReportPrinter.cpp
     src/presentation/OrderFlowBacktestPrinter.cpp
     src/presentation/TerminalDashboard.cpp
+    src/presentation/TerminalKeyDecoder.cpp
     src/runtime/ShutdownSignal.cpp
     src/storage/MarketDataCsvStore.cpp
     src/storage/OrderFlowTickCsvStore.cpp
@@ -180,4 +182,6 @@ if(BUILD_TESTING)
     daytrader_add_test(daytrader_market_data_store_tests tests/MarketDataCsvStoreTests.cpp)
     daytrader_add_test(daytrader_order_flow_tests tests/OrderFlowTests.cpp)
     daytrader_add_test(daytrader_live_trade_context_tests tests/LiveTradeContextTests.cpp)
+    daytrader_add_test(daytrader_terminal_key_decoder_tests tests/TerminalKeyDecoderTests.cpp)
+    daytrader_add_test(daytrader_leveraged_execution_tests tests/LeveragedExecutionTests.cpp)
 endif()

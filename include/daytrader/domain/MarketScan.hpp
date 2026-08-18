@@ -148,6 +148,7 @@ struct RankedEtf {
     std::optional<EntryZone> entry_zone;
     std::optional<EntryZone> leveraged_entry_zone;
     LongOpportunity long_opportunity;
+    LeveragedExecutionDecision leveraged_execution;
 };
 
 // A directional suggestion emitted by the selector, never an executable order.
@@ -166,6 +167,7 @@ struct MarketScan {
     // QQQ remains the direction input; TQQQ is optional execution context.
     std::optional<EtfSnapshot> tqqq;
     std::optional<EntryZone> tqqq_entry_zone;
+    std::optional<LeveragedExecutionDecision> tqqq_execution;
     std::optional<VolatilitySnapshot> vix;
     MarketRegime market_regime{MarketRegime::neutral};
     std::vector<RankedEtf> sector_rankings;

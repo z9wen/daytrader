@@ -1,6 +1,7 @@
 #include "daytrader/presentation/TerminalDashboard.hpp"
 
 #include "daytrader/presentation/ConsoleScanPrinter.hpp"
+#include "daytrader/presentation/TerminalKeyDecoder.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -55,9 +56,28 @@ struct TerminalSize {
     case DashboardTab::sectors:
         return DashboardTab::industries;
     case DashboardTab::industries:
+        return DashboardTab::leveraged;
+    case DashboardTab::leveraged:
         return DashboardTab::trade;
     case DashboardTab::trade:
         return DashboardTab::market;
+    }
+    return DashboardTab::market;
+}
+
+[[nodiscard]] DashboardTab previous_tab(DashboardTab tab)
+{
+    switch (tab) {
+    case DashboardTab::market:
+        return DashboardTab::trade;
+    case DashboardTab::sectors:
+        return DashboardTab::market;
+    case DashboardTab::industries:
+        return DashboardTab::sectors;
+    case DashboardTab::leveraged:
+        return DashboardTab::industries;
+    case DashboardTab::trade:
+        return DashboardTab::leveraged;
     }
     return DashboardTab::market;
 }
@@ -82,20 +102,29 @@ struct TerminalSize {
 )
 {
     std::ostringstream output;
-    if (size.columns >= 92) {
+    if (size.columns >= 120) {
         output << "DAYTRADER  "
                << tab_label(active, DashboardTab::market, "[1 MARKET]") << ' '
                << tab_label(active, DashboardTab::sectors, "[2 SECTORS]") << ' '
                << tab_label(active, DashboardTab::industries, "[3 INDUSTRIES]")
-               << ' ' << tab_label(active, DashboardTab::trade, "[4 TRADE]")
-               << "  Tab switch";
-    } else {
+               << ' ' << tab_label(active, DashboardTab::leveraged, "[4 LEVERAGED]")
+               << ' ' << tab_label(active, DashboardTab::trade, "[5 TRADE]")
+               << "  Tab/Left/Right switch";
+    } else if (size.columns >= 76) {
         output << "DAYTRADER "
                << tab_label(active, DashboardTab::market, "[1 MKT]") << ' '
                << tab_label(active, DashboardTab::sectors, "[2 SEC]") << ' '
                << tab_label(active, DashboardTab::industries, "[3 IND]")
-               << ' ' << tab_label(active, DashboardTab::trade, "[4 TRD]")
-               << " Tab";
+               << ' ' << tab_label(active, DashboardTab::leveraged, "[4 LEV]")
+               << ' ' << tab_label(active, DashboardTab::trade, "[5 TRD]")
+               << " Tab/arrows";
+    } else {
+        output << "DAYTRADER "
+               << tab_label(active, DashboardTab::market, "[1]")
+               << tab_label(active, DashboardTab::sectors, "[2]")
+               << tab_label(active, DashboardTab::industries, "[3]")
+               << tab_label(active, DashboardTab::leveraged, "[4]")
+               << tab_label(active, DashboardTab::trade, "[5]");
     }
     if (page_count > 1) {
         output << " | [/] page " << page_index + 1 << '/' << page_count;
@@ -207,6 +236,49 @@ private:
         render_locked();
     }
 
+    void move_tab(int direction)
+    {
+        DashboardTab target;
+        {
+            std::lock_guard lock{mutex_};
+            target = direction < 0 ? previous_tab(active_tab_) : next_tab(active_tab_);
+        }
+        select_tab(target);
+    }
+
+    void apply_action(TerminalAction action)
+    {
+        switch (action) {
+        case TerminalAction::next_tab:
+            move_tab(1);
+            break;
+        case TerminalAction::previous_tab:
+            move_tab(-1);
+            break;
+        case TerminalAction::market_tab:
+            select_tab(DashboardTab::market);
+            break;
+        case TerminalAction::sectors_tab:
+            select_tab(DashboardTab::sectors);
+            break;
+        case TerminalAction::industries_tab:
+            select_tab(DashboardTab::industries);
+            break;
+        case TerminalAction::leveraged_tab:
+            select_tab(DashboardTab::leveraged);
+            break;
+        case TerminalAction::trade_tab:
+            select_tab(DashboardTab::trade);
+            break;
+        case TerminalAction::previous_page:
+            change_page(-1);
+            break;
+        case TerminalAction::next_page:
+            change_page(1);
+            break;
+        }
+    }
+
     void render_locked()
     {
         if (!latest_scan_.has_value()) {
@@ -279,36 +351,9 @@ private:
                 continue;
             }
             for (std::size_t index = 0; index < static_cast<std::size_t>(count); ++index) {
-                switch (characters[index]) {
-                case '\t': {
-                    DashboardTab next;
-                    {
-                        std::lock_guard lock{mutex_};
-                        next = next_tab(active_tab_);
-                    }
-                    select_tab(next);
-                    break;
-                }
-                case '1':
-                    select_tab(DashboardTab::market);
-                    break;
-                case '2':
-                    select_tab(DashboardTab::sectors);
-                    break;
-                case '3':
-                    select_tab(DashboardTab::industries);
-                    break;
-                case '4':
-                    select_tab(DashboardTab::trade);
-                    break;
-                case '[':
-                    change_page(-1);
-                    break;
-                case ']':
-                    change_page(1);
-                    break;
-                default:
-                    break;
+                const auto action = key_decoder_.consume(characters[index]);
+                if (action.has_value()) {
+                    apply_action(*action);
                 }
             }
         }
@@ -318,6 +363,7 @@ private:
     ConsoleScanPrinter printer_;
     std::mutex mutex_;
     std::optional<domain::MarketScan> latest_scan_;
+    TerminalKeyDecoder key_decoder_;
     DashboardTab active_tab_{DashboardTab::market};
     std::size_t active_page_{};
     std::size_t page_count_{1};

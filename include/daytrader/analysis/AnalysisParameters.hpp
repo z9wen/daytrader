@@ -15,6 +15,13 @@ inline constexpr std::size_t relative_strength_lookback_30 = 6;
 inline constexpr std::size_t relative_strength_lookback = 12;
 // Entry zones use a deliberately narrow quarter-ATR band around session VWAP.
 inline constexpr double entry_zone_atr_half_width = 0.25;
+// Live execution confirmation and MFE giveback thresholds. Profit protection
+// activates only after a non-trivial peak return to avoid reacting to pennies.
+inline constexpr double order_flow_entry_minimum_quality_percent = 50.0;
+inline constexpr double profit_protection_minimum_peak_return_percent = 0.25;
+inline constexpr double profit_protect_giveback_percent = 20.0;
+inline constexpr double profit_trim_giveback_percent = 35.0;
+inline constexpr double profit_exit_giveback_percent = 50.0;
 // EMA change requires one extra observation beyond the EMA seed period.
 inline constexpr std::size_t minimum_analysis_bars =
     std::max(ema_period + 1, relative_strength_lookback + 1);
