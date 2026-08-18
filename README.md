@@ -8,15 +8,15 @@ The application is decision support only: it does not submit orders.
 
 ## Current workflow
 
-The signal ETF determines direction and the leveraged ETF supplies the price
-used for manual execution. The first researched pair is `SOXX -> SOXL`; `QQQ`
-and `TQQQ` data are also cached for the next strategy.
+The unleveraged ETF determines direction and the leveraged ETF supplies the
+price and VWAP/ATR timing used for manual execution. `QQQ -> TQQQ` and
+`SOXX -> SOXL` are the two flow-confirmed execution pairs.
 
 Each rotation row separates trend from timing:
 
 - `phase`: `BUILDING`, `STRONG`, `NEUTRAL`, `FADING`, or `WEAK`
 - `score`: transparent 0-100 bullish-structure score, not a calibrated probability
-- `entry`: `WATCH`, `WAIT_VWAP`, `READY`, or `AVOID`
+- `entry`: `WATCH`, `WAIT_VWAP`, `WAIT_FLOW`, `READY`, or `AVOID`
 - `if held`: `HOLD`, `PROTECT`, `TRIM`, or `EXIT`
 - independent VWAP/ATR entry zones for the signal and leveraged ETFs
 - time-of-day Relative Volume (`RVOL`) against the median of up to 20 prior sessions
@@ -32,13 +32,18 @@ The terminal has five pages: market context (`SPY`, `QQQ`, `TQQQ` execution,
 and optional `VIX`), the eleven standard sector ETFs, twenty industry ETFs,
 an industry-derived long-leveraged ETF watchlist, and a live trade page. The
 leveraged page keeps mappings such as `SOXX` to `SOXL`, the leveraged price and
-entry zone, while the Industries page remains focused on the signal ETFs.
+entry zone, while the Sectors and Industries pages show each signal ETF's
+current price before RVOL.
 The trade page filters the IBKR account to positions in the configured signal
 and long-leveraged ETF universe, so long-term bond or income holdings do not
 appear as day trades. It shows average cost, mark, unrealized P&L,
-process-observed peak MFE and profit giveback, plus rolling
+process-observed peak MFE, profit giveback, and live holding guidance, plus rolling
 30/60-second DeltaRatio for QQQ and SOXX, ATR-normalized pressure state, and
-evidence quality. Press `Tab`, Left/Right, or `1`/`2`/`3`/`4`/`5` to switch
+evidence quality. A new `TQQQ` or `SOXL` entry reaches `READY` only when the
+leveraged ETF is in its own entry zone and QQQ/SOXX Order Flow is
+`BUY_EFFECTIVE` with at least 50% evidence quality. Once peak unrealized profit
+reaches 0.25% of cost basis, 20%/35%/50% giveback tightens guidance to
+`PROTECT`/`TRIM`/`EXIT`. Press `Tab`, Left/Right, or `1`/`2`/`3`/`4`/`5` to switch
 pages. Interactive
 tables automatically select a regular, compact, or minimal column set from the
 current terminal width. Rotation rows
@@ -139,8 +144,10 @@ one-minute, and five-minute DeltaRatio, and distinguishes effective pressure
 from absorption using the price response in SOXX ATR14 units. `ATRx` is the
 completed-bar ATR5/ATR14 ratio, while the signed flow score combines 30-second
 and one-minute Delta, Delta acceleration, and ATR response. The score is a
-diagnostic, not a probability or an active entry gate. Evidence quality remains
-separate and uses classification coverage, direct quote-test coverage, window
+diagnostic, not a probability. In live monitoring, the QQQ/SOXX pressure state
+and evidence quality gate TQQQ/SOXL entries; historical Order Flow reports
+remain exploratory. Evidence quality uses classification coverage, direct
+quote-test coverage, window
 completeness, and trade depth. Raw event samples are cached under
 `data/ibkr/order_flow_ticks/`, so changes to the classifier can be replayed
 without another IBKR request. An asterisk marks a horizon that the bounded

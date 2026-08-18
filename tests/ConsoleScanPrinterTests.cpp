@@ -68,6 +68,16 @@ void require(bool condition, const std::string& message)
             .current_price = 149.75,
             .state = daytrader::domain::EntryZoneState::extended,
         },
+        .long_opportunity = daytrader::domain::LongOpportunity{
+            .bullish_score = 80,
+            .phase = daytrader::domain::BullishPhase::strong,
+            .entry = daytrader::domain::LongEntryDecision::ready,
+            .if_held = daytrader::domain::HoldingGuidance::hold,
+        },
+        .leveraged_execution = daytrader::domain::LeveragedExecutionDecision{
+            .entry = daytrader::domain::LongEntryDecision::wait_for_flow,
+            .if_held = daytrader::domain::HoldingGuidance::trim,
+        },
     };
 }
 
@@ -97,6 +107,10 @@ void require(bool condition, const std::string& message)
             .upper_price = 79.6,
             .state = daytrader::domain::EntryZoneState::extended,
         },
+        .tqqq_execution = daytrader::domain::LeveragedExecutionDecision{
+            .entry = daytrader::domain::LongEntryDecision::wait_for_flow,
+            .if_held = daytrader::domain::HoldingGuidance::protect,
+        },
         .vix = daytrader::domain::VolatilitySnapshot{
             .close = 18.0,
             .ema20 = 17.5,
@@ -118,10 +132,10 @@ void require(bool condition, const std::string& message)
             .quantity = 100.0,
             .average_cost = 50.0,
             .market_price = 52.0,
-            .unrealized_pnl = 200.0,
+            .unrealized_pnl = 180.0,
             .peak_unrealized_pnl = 300.0,
-            .giveback_amount = 100.0,
-            .giveback_percent = 33.3,
+            .giveback_amount = 120.0,
+            .giveback_percent = 40.0,
         }},
         .order_flow = {daytrader::domain::LiveOrderFlowSnapshot{
             .symbol = "SOXX",
@@ -148,6 +162,8 @@ void renders_independent_tabs_and_column_order()
     require(contains(market, "MARKET DIRECTION"), "market tab should show direction ETFs");
     require(contains(market, "TQQQ EXECUTION"), "market tab should show TQQQ execution");
     require(contains(market, "79.40-79.60"), "market tab should show the TQQQ entry zone");
+    require(contains(market, "WAIT_FLOW"),
+            "market tab should show the QQQ-flow-gated TQQQ decision");
     require(contains(market, "VIX RISK REFERENCE"), "market tab should show VIX context");
     require(contains(market, "RISING"), "market tab should show the VIX trend");
     require(!contains(market, "SECTOR ROTATION"), "market tab should not show sectors");
@@ -156,6 +172,8 @@ void renders_independent_tabs_and_column_order()
     require(contains(trade, "LIVE TRADE CONTEXT"), "trade tab should show live context");
     require(contains(trade, "SOXL"), "trade tab should show open positions");
     require(contains(trade, "BUY_EFFECTIVE"), "trade tab should show flow pressure");
+    require(contains(trade, "TRIM"),
+            "trade tab should show MFE-aware position guidance");
     require(!contains(trade, "SECTOR ROTATION"), "trade tab should remain independent");
 
     const auto sectors = printer.render(scan, DashboardTab::sectors);
@@ -260,8 +278,10 @@ void renders_responsive_industry_pages_without_overflow()
             "common wide terminals should show the focused action column");
     require(contains(focused.text, "30 S/Q"),
             "the industry view should restore 30-minute RS after removing leverage columns");
-    require(contains(focused.text, "symbol  RVOL"),
+    require(contains(focused.text, "symbol  price       RVOL"),
             "comfortable layout should visibly separate adjacent columns");
+    require(contains(focused.text, "100.00"),
+            "industry rows should show current price before RVOL");
     require(contains(focused.text, "60 S/Q       entry zone"),
             "comfortable layout should separate signal and execution groups");
     require(contains(focused.text, "IN_ZONE"),
@@ -280,6 +300,20 @@ void renders_responsive_industry_pages_without_overflow()
             "leveraged rows should preserve signal-to-long mappings");
     require(contains(leveraged.text, "EXTENDED"),
             "leveraged layout should retain the complete entry state");
+    require(contains(leveraged.text, "FLOW/TRIM"),
+            "leveraged layout should show execution and MFE guidance");
+
+    const auto sectors = printer.render_page(
+        sample_scan(),
+        DashboardTab::sectors,
+        DashboardViewport{.columns = 170, .rows = 20, .requested_page = 0}
+    );
+    require(contains(sectors.text, "symbol  price       RVOL"),
+            "sector rows should show current price before RVOL");
+    require(contains(sectors.text, "100.00"),
+            "sector rows should include the current ETF price");
+    require(contains(sectors.text, "FLOW/TRIM"),
+            "sector action should use the leveraged ETF execution decision");
 
     const auto narrow = printer.render_page(
         sample_scan(),

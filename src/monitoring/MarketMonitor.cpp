@@ -120,8 +120,8 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
                 scan = latest_scan;
             }
             if (scan.has_value()) {
-                scan->live_context = enricher.enrich(
-                    *scan,
+                *scan = enricher.enrich(
+                    std::move(*scan),
                     live_context_store.snapshot()
                 );
                 dashboard.update(*scan);
@@ -170,8 +170,8 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
                             const std::lock_guard lock{latest_scan_mutex};
                             latest_scan = scan;
                         }
-                        scan.live_context = analysis::LiveTradeContextEnricher{}.enrich(
-                            scan,
+                        scan = analysis::LiveTradeContextEnricher{}.enrich(
+                            std::move(scan),
                             live_context_store.snapshot()
                         );
                         dashboard.update(scan);

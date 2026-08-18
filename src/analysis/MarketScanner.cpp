@@ -2,6 +2,7 @@
 
 #include "daytrader/analysis/EntryZoneCalculator.hpp"
 #include "daytrader/analysis/EtfSnapshotCalculator.hpp"
+#include "daytrader/analysis/LeveragedExecutionAnalyzer.hpp"
 #include "daytrader/analysis/LongOpportunityAnalyzer.hpp"
 #include "daytrader/analysis/MarketRegimeAnalyzer.hpp"
 #include "daytrader/analysis/RelativeStrengthRanker.hpp"
@@ -167,8 +168,18 @@ void add_long_opportunities(
 )
 {
     const LongOpportunityAnalyzer analyzer;
+    const LeveragedExecutionAnalyzer execution_analyzer;
     for (auto& rank : rankings) {
         rank.long_opportunity = analyzer.analyze(rank, market_regime);
+        if (!rank.leveraged_long_symbol.empty()) {
+            rank.leveraged_execution = execution_analyzer.analyze(
+                rank.long_opportunity,
+                rank.leveraged_entry_zone,
+                std::nullopt,
+                nullptr,
+                rank.symbol == "SOXX"
+            );
+        }
     }
 }
 
@@ -233,6 +244,16 @@ domain::MarketScan MarketScanner::scan(
     const strategy::LeveragedEtfSelector selector;
     auto sector_candidate = selector.select(market.regime, sector_rankings);
     auto industry_candidate = selector.select(market.regime, industry_rankings);
+    const auto tqqq_execution = tqqq.has_value()
+        ? std::optional<domain::LeveragedExecutionDecision>{
+            LeveragedExecutionAnalyzer{}.analyze_market(
+                market.qqq,
+                tqqq_entry_zone,
+                std::nullopt,
+                nullptr
+            )
+        }
+        : std::nullopt;
 
     return domain::MarketScan{
         .epoch_seconds = market.epoch_seconds,
@@ -241,6 +262,7 @@ domain::MarketScan MarketScanner::scan(
         .qqq = std::move(market.qqq),
         .tqqq = std::move(tqqq),
         .tqqq_entry_zone = std::move(tqqq_entry_zone),
+        .tqqq_execution = tqqq_execution,
         .vix = std::move(vix),
         .market_regime = market.regime,
         .sector_rankings = std::move(sector_rankings),
