@@ -273,15 +273,15 @@ std::vector<BacktestReport> IbkrBacktestRunner::run(
     std::vector<BacktestReport> reports;
     reports.reserve(2);
     reports.push_back(DayTradeBacktester{DayTradeBacktestSettings{
-        .strategy_name = "SOXX VWAP",
+        .strategy_name = "SOXX -> SOXL",
         .time_zone = config.time_zone,
-        .require_leveraged_vwap_zone = false,
         .earliest_entry_timestamp = cutoff,
     }}.run(history));
     reports.push_back(DayTradeBacktester{DayTradeBacktestSettings{
-        .strategy_name = "SOXX + SOXL VWAP",
+        .strategy_name = "QQQ -> TQQQ",
+        .signal_symbol = "QQQ",
+        .trade_symbol = "TQQQ",
         .time_zone = config.time_zone,
-        .require_leveraged_vwap_zone = true,
         .earliest_entry_timestamp = cutoff,
     }}.run(history));
     return reports;

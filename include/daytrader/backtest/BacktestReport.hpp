@@ -1,5 +1,7 @@
 #pragma once
 
+#include "daytrader/domain/MarketScan.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -12,12 +14,14 @@ enum class ExitReason {
     trailing_stop,
     momentum_faded,
     weak_signal,
+    profit_giveback,
     session_end,
     data_end,
 };
 
 struct TradeRecord {
     std::string session_date;
+    domain::MarketRegime market_regime_at_entry{domain::MarketRegime::neutral};
     std::int64_t entry_timestamp{};
     std::int64_t exit_timestamp{};
     double signal_entry_price{};
@@ -38,6 +42,8 @@ struct TradeRecord {
 
 struct BacktestReport {
     std::string strategy_name;
+    std::string signal_symbol;
+    std::string trade_symbol;
     std::string first_session;
     std::string last_session;
     std::size_t sessions{};
@@ -67,6 +73,8 @@ struct BacktestReport {
         return "MOMENTUM_FADED";
     case ExitReason::weak_signal:
         return "WEAK_SIGNAL";
+    case ExitReason::profit_giveback:
+        return "PROFIT_GIVEBACK";
     case ExitReason::session_end:
         return "SESSION_END";
     case ExitReason::data_end:

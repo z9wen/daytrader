@@ -3,13 +3,73 @@
 #include "daytrader/time/TimeZoneFormatter.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace daytrader::presentation {
+namespace {
+
+struct SubsetStats {
+    std::size_t trades{};
+    std::size_t wins{};
+    double net_return_sum{};
+};
+
+[[nodiscard]] double win_rate(const SubsetStats& stats)
+{
+    return stats.trades == 0
+        ? 0.0
+        : static_cast<double>(stats.wins) / static_cast<double>(stats.trades) * 100.0;
+}
+
+[[nodiscard]] std::size_t market_index(domain::MarketRegime regime)
+{
+    switch (regime) {
+    case domain::MarketRegime::bullish:
+        return 0;
+    case domain::MarketRegime::neutral:
+        return 1;
+    case domain::MarketRegime::bearish:
+        return 2;
+    }
+    return 1;
+}
+
+[[nodiscard]] std::size_t entry_period_index(int minute)
+{
+    if (minute < 9 * 60 + 45) {
+        return 0;
+    }
+    if (minute < 11 * 60 + 30) {
+        return 1;
+    }
+    if (minute < 14 * 60) {
+        return 2;
+    }
+    return 3;
+}
+
+void print_subset(
+    std::ostringstream& output,
+    std::string_view label,
+    const SubsetStats& stats
+)
+{
+    output << label << ' ' << stats.trades;
+    if (stats.trades > 0) {
+        output << " (" << std::fixed << std::setprecision(1)
+               << win_rate(stats) << "% win, " << std::setprecision(3)
+               << stats.net_return_sum / static_cast<double>(stats.trades)
+               << "% avg)";
+    }
+}
+
+} // namespace
 
 BacktestReportPrinter::BacktestReportPrinter(std::string time_zone)
     : time_zone_{std::move(time_zone)}
@@ -21,9 +81,15 @@ std::string BacktestReportPrinter::render(
 ) const
 {
     std::ostringstream output;
-    output << "\nSOXX -> SOXL INTRADAY BACKTEST\n"
-           << "Signals use completed 5-minute bars; fills occur at the next bar open.\n"
-           << "RTH only, one trade per session, 2 bps estimated cost per side.\n\n";
+    output << "\nETF -> LEVERAGED ETF INTRADAY BACKTEST\n"
+           << "Direction comes from QQQ/SOXX; execution timing comes from "
+              "TQQQ/SOXL's own VWAP/ATR zone.\n"
+           << "No hard SPY/QQQ market gate; completed 5-minute signals fill at "
+              "the next bar open.\n"
+           << "RTH entries 09:30-15:30 ET, one trade per session, 2 bps cost "
+              "per side.\n"
+           << "Order Flow is NOT replayed because full-session historical ticks "
+              "are not cached.\n\n";
     output << std::left << std::setw(21) << "strategy"
            << std::right << std::setw(10) << "sessions"
            << std::setw(9) << "trades"
@@ -61,6 +127,41 @@ std::string BacktestReportPrinter::render(
 
     const time::TimeZoneFormatter formatter{time_zone_};
     for (const auto& report : reports) {
+        std::array<SubsetStats, 3> markets{};
+        std::array<SubsetStats, 4> periods{};
+        for (const auto& trade : report.trade_log) {
+            auto& market = markets[market_index(trade.market_regime_at_entry)];
+            auto& period = periods[entry_period_index(
+                formatter.minutes_since_midnight(trade.entry_timestamp)
+            )];
+            ++market.trades;
+            ++period.trades;
+            market.net_return_sum += trade.net_return_percent;
+            period.net_return_sum += trade.net_return_percent;
+            if (trade.net_return_percent > 0.0) {
+                ++market.wins;
+                ++period.wins;
+            }
+        }
+        output << "  " << report.strategy_name << " market context: ";
+        print_subset(output, "BULLISH", markets[0]);
+        output << " | ";
+        print_subset(output, "NEUTRAL", markets[1]);
+        output << " | ";
+        print_subset(output, "BEARISH", markets[2]);
+        output << '\n';
+        output << "  " << report.strategy_name << " entry time: ";
+        print_subset(output, "OPEN", periods[0]);
+        output << " | ";
+        print_subset(output, "MORNING", periods[1]);
+        output << " | ";
+        print_subset(output, "MIDDAY", periods[2]);
+        output << " | ";
+        print_subset(output, "AFTERNOON", periods[3]);
+        output << '\n';
+    }
+
+    for (const auto& report : reports) {
         output << "\nLAST TRADES: " << report.strategy_name << '\n';
         if (report.trade_log.empty()) {
             output << "  No qualifying trades.\n";
@@ -69,6 +170,7 @@ std::string BacktestReportPrinter::render(
         output << std::left << std::setw(12) << "date"
                << std::setw(25) << "entry"
                << std::setw(25) << "exit"
+               << std::setw(10) << "market"
                << std::right << std::setw(10) << "buy"
                << std::setw(10) << "sell"
                << std::setw(10) << "net %"
@@ -80,6 +182,9 @@ std::string BacktestReportPrinter::render(
             output << std::left << std::setw(12) << trade.session_date
                    << std::setw(25) << formatter.format(trade.entry_timestamp)
                    << std::setw(25) << formatter.format(trade.exit_timestamp)
+                   << std::setw(10) << domain::to_string(
+                          trade.market_regime_at_entry
+                      )
                    << std::right << std::setw(10) << std::fixed << std::setprecision(2)
                    << trade.entry_price
                    << std::setw(10) << trade.exit_price

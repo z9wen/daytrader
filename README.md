@@ -98,8 +98,8 @@ short trades.
 
 ## Historical backtest and local data
 
-Run the fixed SOXX-to-SOXL intraday strategy over approximately 240 calendar
-days:
+Run the current QQQ-to-TQQQ and SOXX-to-SOXL intraday rules over approximately
+240 calendar days:
 
 ```sh
 ./build/daytrader backtest 240
@@ -118,11 +118,17 @@ The cache is ignored by Git. A complete recent cache avoids TWS requests;
 otherwise the program refreshes only recent bars or downloads history only for
 missing symbols. Every successful IBKR batch is persisted immediately.
 
-The backtest uses completed five-minute signals, fills at the next bar open,
-limits entry to the morning window, allows one trade per session, estimates
-transaction costs, and reports win rate, average return, profit factor, maximum
-drawdown, holding time, and recent trades. Results are exploratory and do not
-promise future performance.
+The unleveraged ETF determines direction while the leveraged ETF must reach its
+own VWAP/ATR entry zone. The backtest does not require SPY and QQQ to be bullish,
+uses completed five-minute signals, fills at the next bar open, scans the
+09:30-15:30 ET RTH entry window, and allows one trade per session. It reports
+performance together with entry-time and broad-market-context breakdowns.
+
+Premarket is not included because the current cache contains RTH bars only.
+Live DeltaRatio/Order Flow is also not replayed unless full-session historical
+ticks are available, so the report labels that limitation rather than treating
+missing flow as confirmation. Transaction costs are estimated; results are
+exploratory and do not promise future performance.
 
 For the first Order Flow experiment, run a 30-calendar-day baseline and fetch
 bounded SOXX time-and-sales only around its candidate entries:

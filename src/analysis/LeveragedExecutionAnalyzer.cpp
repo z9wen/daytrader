@@ -178,7 +178,8 @@ domain::LeveragedExecutionDecision LeveragedExecutionAnalyzer::analyze_market(
     const domain::EtfSnapshot& signal,
     const std::optional<domain::EntryZone>& leveraged_entry_zone,
     const std::optional<domain::OrderFlowAssessment>& order_flow,
-    const domain::PositionSnapshot* position
+    const domain::PositionSnapshot* position,
+    bool require_order_flow_confirmation
 ) const
 {
     return analyze(
@@ -186,7 +187,7 @@ domain::LeveragedExecutionDecision LeveragedExecutionAnalyzer::analyze_market(
         leveraged_entry_zone,
         order_flow,
         position,
-        true
+        require_order_flow_confirmation
     );
 }
 

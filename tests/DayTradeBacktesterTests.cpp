@@ -75,9 +75,105 @@ void enters_on_next_bar_and_closes_the_same_session()
         "entry must occur after the completed signal bar"
     );
     require(
-        report.trade_log.front().exit_reason == daytrader::backtest::ExitReason::session_end,
-        "day trade must close before the session ends"
+        report.trade_log.front().exit_timestamp
+            <= session_open + static_cast<std::int64_t>(77 * 300),
+        "day trade must close during the same RTH session"
     );
+}
+
+void does_not_require_a_bullish_broad_market()
+{
+    const std::vector<daytrader::domain::InstrumentBars> instruments{
+        make_session("SPY", 100.0, -0.010, 0.10),
+        make_session("QQQ", 200.0, -0.015, 0.15),
+        make_session("SOXX", 300.0, 0.005, 0.20),
+        make_session("SOXL", 50.0, 0.003, 0.10),
+    };
+    const auto report = daytrader::backtest::DayTradeBacktester{
+        daytrader::backtest::DayTradeBacktestSettings{
+            .strategy_name = "market-independent",
+            .initial_stop_atr = 100.0,
+            .trailing_activation_atr = 100.0,
+            .per_side_cost_basis_points = 0.0,
+        }
+    }.run(instruments);
+
+    require(report.trades == 1,
+            "an independently strong SOXX should remain tradable in a weak market");
+    require(
+        report.trade_log.front().market_regime_at_entry
+            == daytrader::domain::MarketRegime::bearish,
+        "the trade should retain its bearish broad-market context"
+    );
+}
+
+void can_enter_after_the_old_morning_cutoff()
+{
+    const std::vector<daytrader::domain::InstrumentBars> instruments{
+        make_session("SPY", 100.0, 0.001, 0.10),
+        make_session("QQQ", 200.0, 0.003, 0.15),
+        make_session("SOXX", 300.0, 0.005, 0.20),
+        make_session("SOXL", 50.0, 0.003, 0.10),
+    };
+    const auto report = daytrader::backtest::DayTradeBacktester{
+        daytrader::backtest::DayTradeBacktestSettings{
+            .strategy_name = "afternoon-entry",
+            .entry_start_minute = 12 * 60,
+            .initial_stop_atr = 100.0,
+            .trailing_activation_atr = 100.0,
+            .per_side_cost_basis_points = 0.0,
+        }
+    }.run(instruments);
+
+    require(report.trades == 1, "a valid setup after 11:30 should be testable");
+    require(
+        report.trade_log.front().entry_timestamp
+            >= session_open + static_cast<std::int64_t>(31 * 300),
+        "the entry should occur after noon and on the next bar"
+    );
+}
+
+void supports_qqq_to_tqqq_execution()
+{
+    const std::vector<daytrader::domain::InstrumentBars> instruments{
+        make_session("SPY", 100.0, -0.003, 0.10),
+        make_session("QQQ", 200.0, 0.010, 0.15),
+        make_session("TQQQ", 60.0, 0.003, 0.10),
+    };
+    const auto report = daytrader::backtest::DayTradeBacktester{
+        daytrader::backtest::DayTradeBacktestSettings{
+            .strategy_name = "qqq-tqqq",
+            .signal_symbol = "QQQ",
+            .trade_symbol = "TQQQ",
+            .initial_stop_atr = 100.0,
+            .trailing_activation_atr = 100.0,
+            .per_side_cost_basis_points = 0.0,
+        }
+    }.run(instruments);
+
+    require(report.trades == 1, "QQQ should be usable as the signal ETF");
+    require(report.signal_symbol == "QQQ", "report should identify QQQ as signal");
+    require(report.trade_symbol == "TQQQ", "report should identify TQQQ as execution");
+}
+
+void requires_the_leveraged_etf_to_reach_its_own_entry_zone()
+{
+    const std::vector<daytrader::domain::InstrumentBars> instruments{
+        make_session("SPY", 100.0, 0.001, 0.10),
+        make_session("QQQ", 200.0, 0.003, 0.15),
+        make_session("SOXX", 300.0, 0.005, 0.20),
+        // SOXL is deliberately far above its own VWAP/ATR zone throughout the
+        // decision window, even though SOXX supplies a bullish direction.
+        make_session("SOXL", 50.0, 0.200, 0.10),
+    };
+    const auto report = daytrader::backtest::DayTradeBacktester{
+        daytrader::backtest::DayTradeBacktestSettings{
+            .strategy_name = "leveraged-zone-gate",
+        }
+    }.run(instruments);
+
+    require(report.trades == 0,
+            "an extended SOXL must wait for its own VWAP zone before entry");
 }
 
 void excludes_warmup_bars_from_the_report_window()
@@ -105,6 +201,10 @@ int main()
 {
     try {
         enters_on_next_bar_and_closes_the_same_session();
+        does_not_require_a_bullish_broad_market();
+        can_enter_after_the_old_morning_cutoff();
+        supports_qqq_to_tqqq_execution();
+        requires_the_leveraged_etf_to_reach_its_own_entry_zone();
         excludes_warmup_bars_from_the_report_window();
         std::cout << "DayTradeBacktesterTests passed\n";
         return 0;
