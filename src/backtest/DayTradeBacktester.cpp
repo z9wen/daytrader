@@ -1,6 +1,7 @@
 #include "daytrader/backtest/DayTradeBacktester.hpp"
 
 #include "daytrader/analysis/AnalysisParameters.hpp"
+#include "daytrader/analysis/LeveragedExecutionAnalyzer.hpp"
 #include "daytrader/analysis/MarketScanner.hpp"
 #include "daytrader/config/MarketDataSettings.hpp"
 #include "daytrader/domain/TradeDecision.hpp"
@@ -30,6 +31,7 @@ using BarIndex = std::unordered_map<std::int64_t, const domain::MarketBar*>;
 
 struct PendingEntry {
     std::string session_date;
+    domain::MarketRegime market_regime{domain::MarketRegime::neutral};
     double signal_atr{};
     double trade_atr{};
     double signal_atr_expansion_ratio{};
@@ -38,6 +40,8 @@ struct PendingEntry {
 
 struct Position {
     std::string session_date;
+    domain::MarketRegime market_regime_at_entry{domain::MarketRegime::neutral};
+    std::size_t trade_number_in_session{};
     std::int64_t entry_timestamp{};
     double signal_entry_price{};
     double entry_price{};
@@ -130,6 +134,79 @@ struct PendingExit {
     };
 }
 
+[[nodiscard]] domain::PositionSnapshot simulated_position_snapshot(
+    const Position& position,
+    double current_price
+)
+{
+    const double peak_profit = std::max(
+        0.0,
+        position.peak_price - position.entry_price
+    );
+    const double current_profit = current_price - position.entry_price;
+    const double giveback = std::max(0.0, peak_profit - current_profit);
+    return domain::PositionSnapshot{
+        .symbol = {},
+        .quantity = 1.0,
+        .average_cost = position.entry_price,
+        .market_price = current_price,
+        .unrealized_pnl = current_profit,
+        .peak_unrealized_pnl = peak_profit,
+        .giveback_amount = giveback,
+        .giveback_percent = peak_profit > 0.0
+            ? std::optional<double>{giveback / peak_profit * 100.0}
+            : std::nullopt,
+    };
+}
+
+[[nodiscard]] domain::LeveragedExecutionDecision historical_execution(
+    const DayTradeBacktestSettings& settings,
+    const domain::MarketScan& scan,
+    const domain::RankedEtf& rank,
+    const domain::PositionSnapshot* position
+)
+{
+    const analysis::LeveragedExecutionAnalyzer analyzer;
+    if (settings.signal_symbol == "QQQ") {
+        return analyzer.analyze_market(
+            scan.qqq,
+            rank.leveraged_entry_zone,
+            std::nullopt,
+            position,
+            false
+        );
+    }
+    return analyzer.analyze(
+        rank.long_opportunity,
+        rank.leveraged_entry_zone,
+        std::nullopt,
+        position,
+        false
+    );
+}
+
+[[nodiscard]] domain::BullishPhase historical_signal_phase(
+    const DayTradeBacktestSettings& settings,
+    const domain::MarketScan& scan,
+    const domain::RankedEtf& rank
+)
+{
+    if (settings.signal_symbol != "QQQ") {
+        return rank.long_opportunity.phase;
+    }
+    // QQQ execution is driven by its absolute market snapshot, so its re-arm
+    // state must use the same source instead of the duplicate ranking row.
+    switch (scan.qqq.trend_signal) {
+    case domain::MarketTrendSignal::strong:
+        return domain::BullishPhase::strong;
+    case domain::MarketTrendSignal::neutral:
+        return domain::BullishPhase::building;
+    case domain::MarketTrendSignal::weak:
+        return domain::BullishPhase::weak;
+    }
+    return domain::BullishPhase::neutral;
+}
+
 void append_trade(
     BacktestReport& report,
     const DayTradeBacktestSettings& settings,
@@ -144,6 +221,8 @@ void append_trade(
     const double net_return = gross_return - round_trip_cost;
     report.trade_log.push_back(TradeRecord{
         .session_date = position.session_date,
+        .market_regime_at_entry = position.market_regime_at_entry,
+        .trade_number_in_session = position.trade_number_in_session,
         .entry_timestamp = position.entry_timestamp,
         .exit_timestamp = exit_timestamp,
         .signal_entry_price = position.signal_entry_price,
@@ -176,6 +255,7 @@ void summarize(BacktestReport& report)
         return;
     }
 
+    std::unordered_map<std::string, std::size_t> trades_per_session;
     double return_sum{};
     double win_sum{};
     double loss_sum{};
@@ -186,6 +266,7 @@ void summarize(BacktestReport& report)
     double maximum_drawdown{};
 
     for (const auto& trade : report.trade_log) {
+        ++trades_per_session[trade.session_date];
         return_sum += trade.net_return_percent;
         holding_minutes_sum += static_cast<double>(
             trade.exit_timestamp - trade.entry_timestamp
@@ -207,6 +288,15 @@ void summarize(BacktestReport& report)
                 (peak_equity - equity) / peak_equity * 100.0
             );
         }
+    }
+
+    report.traded_sessions = trades_per_session.size();
+    for (const auto& [session, trade_count] : trades_per_session) {
+        static_cast<void>(session);
+        report.maximum_trades_in_session = std::max(
+            report.maximum_trades_in_session,
+            trade_count
+        );
     }
 
     const auto trade_count = static_cast<double>(report.trades);
@@ -245,18 +335,21 @@ DayTradeBacktester::DayTradeBacktester(DayTradeBacktestSettings settings)
     if (settings_.per_side_cost_basis_points < 0.0) {
         throw std::invalid_argument("backtest trading cost cannot be negative");
     }
+    if (settings_.maximum_trades_per_session == 0) {
+        throw std::invalid_argument("backtest must allow at least one trade per session");
+    }
 }
 
 BacktestReport DayTradeBacktester::run(
     const std::vector<domain::InstrumentBars>& instruments
 ) const
 {
-    const std::vector<std::string> symbols{
-        "SPY",
-        "QQQ",
-        settings_.signal_symbol,
-        settings_.trade_symbol,
-    };
+    std::vector<std::string> symbols{"SPY", "QQQ"};
+    for (const auto* symbol : {&settings_.signal_symbol, &settings_.trade_symbol}) {
+        if (std::ranges::find(symbols, *symbol) == symbols.end()) {
+            symbols.push_back(*symbol);
+        }
+    }
     std::vector<BarIndex> indexes;
     indexes.reserve(symbols.size());
     for (const auto& symbol : symbols) {
@@ -275,7 +368,18 @@ BacktestReport DayTradeBacktester::run(
         rolling.push_back(domain::InstrumentBars{.symbol = symbol});
     }
 
-    BacktestReport report{.strategy_name = settings_.strategy_name};
+    const auto signal_index = static_cast<std::size_t>(
+        std::ranges::find(symbols, settings_.signal_symbol) - symbols.begin()
+    );
+    const auto trade_index = static_cast<std::size_t>(
+        std::ranges::find(symbols, settings_.trade_symbol) - symbols.begin()
+    );
+
+    BacktestReport report{
+        .strategy_name = settings_.strategy_name,
+        .signal_symbol = settings_.signal_symbol,
+        .trade_symbol = settings_.trade_symbol,
+    };
     const auto etfs = backtest_universe(settings_);
     const analysis::MarketScanner scanner{
         settings_.time_zone,
@@ -288,7 +392,10 @@ BacktestReport DayTradeBacktester::run(
     std::optional<Position> position;
     std::optional<domain::MarketBar> previous_trade_bar;
     std::string current_session;
-    bool traded_this_session{};
+    // The first setup is primary. One optional re-entry can be enabled by the
+    // settings, but it must re-arm through a fresh BUILDING phase first.
+    bool entry_armed{true};
+    std::size_t trades_this_session{};
 
     for (const auto timestamp : timestamps) {
         for (std::size_t index = 0; index < indexes.size(); ++index) {
@@ -297,8 +404,8 @@ BacktestReport DayTradeBacktester::run(
                 rolling[index].bars.erase(rolling[index].bars.begin());
             }
         }
-        const auto& trade_bar = *indexes.back().at(timestamp);
-        const auto& signal_bar = *indexes[2].at(timestamp);
+        const auto& trade_bar = *indexes[trade_index].at(timestamp);
+        const auto& signal_bar = *indexes[signal_index].at(timestamp);
         const std::string session = formatter.format_date(timestamp);
         const int minute = formatter.minutes_since_midnight(timestamp);
         const bool in_test_window = !settings_.earliest_entry_timestamp.has_value()
@@ -321,7 +428,8 @@ BacktestReport DayTradeBacktester::run(
             }
             pending_entry.reset();
             pending_exit.reset();
-            traded_this_session = false;
+            entry_armed = true;
+            trades_this_session = 0;
         }
         current_session = session;
 
@@ -340,9 +448,11 @@ BacktestReport DayTradeBacktester::run(
             pending_exit.reset();
         }
         if (!position.has_value() && pending_entry.has_value()) {
-            if (pending_entry->session_date == session && !traded_this_session) {
+            if (pending_entry->session_date == session) {
                 position = Position{
                     .session_date = session,
+                    .market_regime_at_entry = pending_entry->market_regime,
+                    .trade_number_in_session = trades_this_session + 1,
                     .entry_timestamp = timestamp,
                     .signal_entry_price = signal_bar.open,
                     .entry_price = trade_bar.open,
@@ -357,7 +467,8 @@ BacktestReport DayTradeBacktester::run(
                     .peak_price = trade_bar.open,
                     .trough_price = trade_bar.open,
                 };
-                traded_this_session = true;
+                ++trades_this_session;
+                entry_armed = false;
             }
             pending_entry.reset();
         }
@@ -409,12 +520,35 @@ BacktestReport DayTradeBacktester::run(
                 );
             }
 
+            const auto position_snapshot = simulated_position_snapshot(
+                *position,
+                trade_bar.close
+            );
+            const auto execution = historical_execution(
+                settings_,
+                scan,
+                *rank,
+                &position_snapshot
+            );
+            const auto signal_only_execution = historical_execution(
+                settings_,
+                scan,
+                *rank,
+                nullptr
+            );
+            const bool profit_protection_tightened = execution.if_held
+                != signal_only_execution.if_held;
+
             if (minute >= settings_.forced_exit_signal_minute) {
                 pending_exit = PendingExit{.reason = ExitReason::session_end};
-            } else if (rank->long_opportunity.if_held
+            } else if (profit_protection_tightened
+                       && (execution.if_held == domain::HoldingGuidance::trim
+                           || execution.if_held == domain::HoldingGuidance::exit)) {
+                pending_exit = PendingExit{.reason = ExitReason::profit_giveback};
+            } else if (signal_only_execution.if_held
                        == domain::HoldingGuidance::exit) {
                 pending_exit = PendingExit{.reason = ExitReason::weak_signal};
-            } else if (rank->long_opportunity.if_held
+            } else if (signal_only_execution.if_held
                        == domain::HoldingGuidance::hold) {
                 position->non_strong_bars = 0;
             } else {
@@ -423,18 +557,28 @@ BacktestReport DayTradeBacktester::run(
                     pending_exit = PendingExit{.reason = ExitReason::momentum_faded};
                 }
             }
-        } else if (in_test_window && !traded_this_session && !pending_entry.has_value()
+        } else if (in_test_window && !pending_entry.has_value()
+                   && trades_this_session < settings_.maximum_trades_per_session
                    && minute >= settings_.entry_start_minute
                    && minute <= settings_.entry_end_minute
-                   && scan.market_regime == domain::MarketRegime::bullish
-                   && rank->long_opportunity.entry == domain::LongEntryDecision::ready
                    && rank->entry_zone.has_value()
                    && rank->leveraged_entry_zone.has_value()) {
-            const bool leveraged_ready = rank->leveraged_entry_zone->state
-                == domain::EntryZoneState::in_zone;
-            if (!settings_.require_leveraged_vwap_zone || leveraged_ready) {
+            if (!entry_armed
+                && historical_signal_phase(settings_, scan, *rank)
+                    == domain::BullishPhase::building) {
+                entry_armed = true;
+            }
+            const auto execution = historical_execution(
+                settings_,
+                scan,
+                *rank,
+                nullptr
+            );
+            if (entry_armed
+                && execution.entry == domain::LongEntryDecision::ready) {
                 pending_entry = PendingEntry{
                     .session_date = session,
+                    .market_regime = scan.market_regime,
                     .signal_atr = rank->entry_zone->atr14,
                     .trade_atr = rank->leveraged_entry_zone->atr14,
                     .signal_atr_expansion_ratio =
