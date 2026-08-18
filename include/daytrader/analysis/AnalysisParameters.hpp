@@ -9,7 +9,9 @@ namespace daytrader::analysis {
 inline constexpr std::size_t ema_period = 20;
 inline constexpr std::size_t atr_period = 14;
 inline constexpr std::size_t fast_atr_period = 5;
-// Twelve 5-minute bars represent the 60-minute relative-strength window.
+// Three/six/twelve 5-minute bars represent 15/30/60-minute RS windows.
+inline constexpr std::size_t relative_strength_lookback_15 = 3;
+inline constexpr std::size_t relative_strength_lookback_30 = 6;
 inline constexpr std::size_t relative_strength_lookback = 12;
 // Entry zones use a deliberately narrow quarter-ATR band around session VWAP.
 inline constexpr double entry_zone_atr_half_width = 0.25;

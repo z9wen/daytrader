@@ -1,6 +1,8 @@
 #include "daytrader/analysis/EtfSnapshotCalculator.hpp"
 
 #include "daytrader/analysis/AnalysisParameters.hpp"
+#include "daytrader/analysis/RelativeVolumeAnalyzer.hpp"
+#include "daytrader/analysis/VwapStructureAnalyzer.hpp"
 #include "daytrader/indicators/TechnicalIndicators.hpp"
 
 #include <optional>
@@ -50,6 +52,8 @@ domain::EtfSnapshot EtfSnapshotCalculator::calculate(
         : ((ema.current / ema.previous) - 1.0) * 100.0;
     const auto session_vwap = indicators::session_vwap(bars, time_formatter);
     const double close = closes.back();
+    const double atr14 = indicators::average_true_range(bars, atr_period);
+    const double atr5 = indicators::average_true_range(bars, fast_atr_period);
 
     return domain::EtfSnapshot{
         .symbol = std::move(symbol),
@@ -57,6 +61,10 @@ domain::EtfSnapshot EtfSnapshotCalculator::calculate(
         .session_vwap = session_vwap,
         .ema20 = ema.current,
         .ema20_change_percent = ema_change,
+        .atr14 = atr14,
+        .atr_expansion_ratio = atr14 > 0.0 ? atr5 / atr14 : 1.0,
+        .vwap_structure = VwapStructureAnalyzer{}.analyze(bars, time_formatter),
+        .relative_volume = RelativeVolumeAnalyzer{}.analyze(bars, time_formatter),
         .trend_signal = classify_trend(close, session_vwap, ema_change),
     };
 }

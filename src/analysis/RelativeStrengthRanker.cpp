@@ -2,6 +2,7 @@
 
 #include "daytrader/analysis/AnalysisParameters.hpp"
 #include "daytrader/analysis/EtfSnapshotCalculator.hpp"
+#include "daytrader/analysis/RelativeStrengthAnalyzer.hpp"
 #include "daytrader/indicators/TechnicalIndicators.hpp"
 
 #include <stdexcept>
@@ -53,8 +54,8 @@ std::optional<domain::RankedEtf> RelativeStrengthRanker::rank(
 
     const auto ratio_ema = indicators::exponential_moving_average(ratios, ema_period);
     const double current_ratio = ratios.back();
-    const double prior_ratio = ratios[ratios.size() - 1 - relative_strength_lookback];
-    const double relative_change = ((current_ratio / prior_ratio) - 1.0) * 100.0;
+    const auto horizons = RelativeStrengthAnalyzer{}.analyze(signal_vs_benchmark);
+    const double relative_change = horizons.sixty_minute_percent.value_or(0.0);
 
     auto signal = domain::RelativeStrengthSignal::neutral;
     if (current_ratio > ratio_ema.current && relative_change > 0.0) {
@@ -83,7 +84,10 @@ std::optional<domain::RankedEtf> RelativeStrengthRanker::rank(
         .ema20_change_percent = snapshot.ema20_change_percent,
         .relative_ratio = current_ratio,
         .relative_ratio_ema20 = ratio_ema.current,
+        .relative_strength_vs_spy = horizons,
         .relative_change_60_min_percent = relative_change,
+        .vwap_structure = snapshot.vwap_structure,
+        .relative_volume = snapshot.relative_volume,
         .signal = signal,
     };
 }

@@ -55,6 +55,8 @@ struct TerminalSize {
     case DashboardTab::sectors:
         return DashboardTab::industries;
     case DashboardTab::industries:
+        return DashboardTab::trade;
+    case DashboardTab::trade:
         return DashboardTab::market;
     }
     return DashboardTab::market;
@@ -85,12 +87,14 @@ struct TerminalSize {
                << tab_label(active, DashboardTab::market, "[1 MARKET]") << ' '
                << tab_label(active, DashboardTab::sectors, "[2 SECTORS]") << ' '
                << tab_label(active, DashboardTab::industries, "[3 INDUSTRIES]")
+               << ' ' << tab_label(active, DashboardTab::trade, "[4 TRADE]")
                << "  Tab switch";
     } else {
         output << "DAYTRADER "
                << tab_label(active, DashboardTab::market, "[1 MKT]") << ' '
                << tab_label(active, DashboardTab::sectors, "[2 SEC]") << ' '
                << tab_label(active, DashboardTab::industries, "[3 IND]")
+               << ' ' << tab_label(active, DashboardTab::trade, "[4 TRD]")
                << " Tab";
     }
     if (page_count > 1) {
@@ -148,7 +152,13 @@ public:
     void update(const domain::MarketScan& scan)
     {
         std::lock_guard lock{mutex_};
+        const bool same_completed_bar = latest_scan_.has_value()
+            && latest_scan_->epoch_seconds == scan.epoch_seconds;
         latest_scan_ = scan;
+        // Redirected output is a bar-by-bar log, not a one-second P&L ticker.
+        if (!interactive_ && same_completed_bar) {
+            return;
+        }
         render_locked();
     }
 
@@ -287,6 +297,9 @@ private:
                     break;
                 case '3':
                     select_tab(DashboardTab::industries);
+                    break;
+                case '4':
+                    select_tab(DashboardTab::trade);
                     break;
                 case '[':
                     change_page(-1);

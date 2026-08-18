@@ -24,7 +24,22 @@ void require(bool condition, const std::string& message)
         .ema20_change_percent = 0.05,
         .relative_ratio = 1.02,
         .relative_ratio_ema20 = 1.01,
+        .relative_strength_vs_spy = daytrader::domain::RelativeStrengthHorizons{
+            .fifteen_minute_percent = 0.2,
+            .thirty_minute_percent = 0.3,
+            .sixty_minute_percent = 0.4,
+        },
+        .relative_strength_vs_qqq = daytrader::domain::RelativeStrengthHorizons{
+            .fifteen_minute_percent = 0.1,
+            .thirty_minute_percent = 0.2,
+            .sixty_minute_percent = 0.3,
+        },
         .relative_change_60_min_percent = 0.4,
+        .vwap_structure = daytrader::domain::VwapStructureState::above_rising,
+        .relative_volume = daytrader::domain::RelativeVolumeSnapshot{
+            .bar_ratio = 1.3,
+            .state = daytrader::domain::RelativeVolumeState::expanding,
+        },
         .signal = daytrader::domain::RelativeStrengthSignal::strong,
         .entry_zone = daytrader::domain::EntryZone{.state = zone_state},
     };
@@ -77,14 +92,45 @@ void strong_industry_remains_actionable_in_bearish_market()
         domain::MarketRegime::bearish
     );
 
-    require(decision.bullish_score == 80,
-            "bearish market should withhold its 20-point context bonus");
+    require(decision.bullish_score == 90,
+            "bearish market should withhold only its 10-point context bonus");
     require(decision.phase == domain::BullishPhase::strong,
             "market direction must not override independent industry strength");
     require(decision.entry == domain::LongEntryDecision::ready,
             "independent strength at its VWAP zone should remain actionable");
     require(decision.if_held == domain::HoldingGuidance::hold,
             "an independently strong intraday position should remain HOLD");
+}
+
+void light_volume_requires_confirmation_before_entry()
+{
+    using namespace daytrader;
+    auto rank = bullish_rank(domain::EntryZoneState::in_zone);
+    rank.relative_volume.state = domain::RelativeVolumeState::light;
+    const auto decision = analysis::LongOpportunityAnalyzer{}.analyze(
+        rank,
+        domain::MarketRegime::bullish
+    );
+    require(decision.phase == domain::BullishPhase::strong,
+            "light RVOL should not erase an otherwise strong trend");
+    require(decision.entry == domain::LongEntryDecision::watch,
+            "light RVOL should require confirmation instead of READY");
+}
+
+void losing_vwap_trims_even_before_relative_strength_turns_weak()
+{
+    using namespace daytrader;
+    auto rank = bullish_rank(domain::EntryZoneState::below_zone);
+    rank.close = 99.0;
+    rank.vwap_structure = domain::VwapStructureState::lost;
+    const auto decision = analysis::LongOpportunityAnalyzer{}.analyze(
+        rank,
+        domain::MarketRegime::bullish
+    );
+    require(decision.phase == domain::BullishPhase::fading,
+            "VWAP loss should mark the long structure FADING");
+    require(decision.if_held == domain::HoldingGuidance::trim,
+            "VWAP loss should advise TRIM before a full weak-signal EXIT");
 }
 
 } // namespace
@@ -95,6 +141,8 @@ int main()
         strong_signal_separates_ready_from_chasing();
         weak_signal_exits_instead_of_opening();
         strong_industry_remains_actionable_in_bearish_market();
+        light_volume_requires_confirmation_before_entry();
+        losing_vwap_trims_even_before_relative_strength_turns_weak();
         std::cout << "LongOpportunityTests passed\n";
         return 0;
     } catch (const std::exception& exception) {

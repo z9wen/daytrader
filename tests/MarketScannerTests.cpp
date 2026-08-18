@@ -119,6 +119,17 @@ void bullish_market_selects_strongest_leveraged_industry()
     require(scan.sector_rankings.front().symbol == "XLK", "expected XLK sector rank");
     require(scan.rankings.size() == 2, "expected only industry ETFs to be ranked");
     require(scan.rankings.front().symbol == "SOXX", "expected SOXX to rank first");
+    require(
+        scan.rankings.front().relative_strength_vs_spy.fifteen_minute_percent.has_value()
+            && scan.rankings.front().relative_strength_vs_spy.thirty_minute_percent.has_value()
+            && scan.rankings.front().relative_strength_vs_spy.sixty_minute_percent.has_value(),
+        "expected SOXX 15/30/60-minute RS versus SPY"
+    );
+    require(
+        scan.rankings.front().relative_strength_vs_qqq.fifteen_minute_percent.has_value()
+            && scan.rankings.front().relative_strength_vs_qqq.sixty_minute_percent.has_value(),
+        "expected SOXX multi-period RS versus QQQ"
+    );
     require(scan.rankings.front().entry_zone.has_value(), "expected SOXX entry zone");
     require(
         scan.rankings.front().entry_zone->symbol == "SOXX",

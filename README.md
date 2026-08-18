@@ -19,16 +19,23 @@ Each rotation row separates trend from timing:
 - `entry`: `WATCH`, `WAIT_VWAP`, `READY`, or `AVOID`
 - `if held`: `HOLD`, `PROTECT`, `TRIM`, or `EXIT`
 - independent VWAP/ATR entry zones for the signal and leveraged ETFs
+- time-of-day Relative Volume (`RVOL`) against the median of up to 20 prior sessions
+- VWAP structure (`RECLAIM`, `RISING`, `ABOVE`, `BELOW`, or `LOST`)
+- 15/30/60-minute relative strength against both SPY (`S`) and QQQ (`Q`)
 
 Sector and industry phases remain instrument-specific. The SPY/QQQ market
 regime contributes to the score as risk context, but a bearish market does not
 force an independently strong industry to `WEAK` or every held position to
 `EXIT`.
 
-The terminal has three pages: market context (`SPY`, `QQQ`, and optional `VIX`),
-the eleven standard sector ETFs, and twenty industry ETFs. Press `Tab` or
-`1`/`2`/`3` to switch pages. Interactive tables automatically select a regular,
-compact, or minimal column set from the current terminal width. Rotation rows
+The terminal has four pages: market context (`SPY`, `QQQ`, and optional `VIX`),
+the eleven standard sector ETFs, twenty industry ETFs, and a live trade page.
+The trade page shows read-only IBKR positions, average cost, mark, unrealized
+P&L, process-observed peak MFE and profit giveback. It also shows rolling
+30/60-second DeltaRatio for QQQ and SOXX, ATR-normalized pressure state, and
+evidence quality. Press `Tab` or `1`/`2`/`3`/`4` to switch pages. Interactive
+tables automatically select a regular, compact, or minimal column set from the
+current terminal width. Rotation rows
 are separated into clearly labeled `STRONG`, `NEUTRAL`, and `WEAK` sections and
 paginated to the available height; press `[` or `]` to change page. A group that
 continues on another page repeats its label and column header. Resizing the
@@ -62,13 +69,19 @@ by IBKR, so it takes longer than subsequent builds.
 
 The defaults connect to TWS at `127.0.0.1:9972` with client ID `7`, use regular
 trading hours and five-minute `TRADES` bars, and display times in
-`America/New_York`.
+`America/New_York`. A second read-only connection uses client ID `8` for
+positions/P&L and four tick-by-tick streams (QQQ/SOXX Last + BidAsk). The
+monitor requests only the latest two days for a fast startup, merges them with
+the CSV cache, and then consumes incremental updates. Time-of-day RVOL uses the
+median of up to 20 cached prior sessions no older than 45 calendar days; it
+remains unavailable until at least three comparable sessions have accumulated.
 
 ```sh
 ./build/daytrader
 ```
 
-The dashboard refreshes after each synchronized completed bar. Inverse ETFs are
+The bar analysis refreshes after each synchronized completed bar; live P&L and
+Order Flow redraw at roughly one-second cadence. Inverse ETFs are
 shown only as bearish references; they are not subscribed or proposed as live
 short trades.
 
@@ -134,9 +147,13 @@ Supported environment variables:
 - `DAYTRADER_IBKR_HOST`
 - `DAYTRADER_IBKR_PORT`
 - `DAYTRADER_IBKR_CLIENT_ID`
+- `DAYTRADER_LIVE_CLIENT_ID`
 - `DAYTRADER_REQUEST_TIMEOUT_SECONDS`
 - `DAYTRADER_BAR_INTERVAL_SECONDS`
 - `DAYTRADER_RECONNECT_DELAY_SECONDS`
+- `DAYTRADER_MONITOR_DURATION`
+- `DAYTRADER_MONITOR_MAX_BARS`
+- `DAYTRADER_MONITOR_TIMEOUT_SECONDS`
 - `DAYTRADER_DATA_TYPE`
 - `DAYTRADER_DURATION`
 - `DAYTRADER_BAR_SIZE`

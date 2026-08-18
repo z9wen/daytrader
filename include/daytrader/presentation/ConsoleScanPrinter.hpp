@@ -12,6 +12,7 @@ enum class DashboardTab {
     market,
     sectors,
     industries,
+    trade,
 };
 
 // Interactive rendering constraints. Page numbers are zero-based internally;

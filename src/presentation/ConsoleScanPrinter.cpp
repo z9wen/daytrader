@@ -83,12 +83,62 @@ struct ResponsiveRank {
     return "?";
 }
 
+[[nodiscard]] std::string ratio_text(const std::optional<double>& value)
+{
+    if (!value.has_value()) {
+        return "-";
+    }
+    std::ostringstream output;
+    output << std::fixed << std::setprecision(2) << *value << 'x';
+    return output.str();
+}
+
+[[nodiscard]] std::string number_text(
+    const std::optional<double>& value,
+    int precision = 2
+)
+{
+    if (!value.has_value()) {
+        return "-";
+    }
+    std::ostringstream output;
+    output << std::fixed << std::setprecision(precision) << *value;
+    return output.str();
+}
+
+[[nodiscard]] std::string rs_pair_text(
+    const std::optional<double>& versus_spy,
+    const std::optional<double>& versus_qqq
+)
+{
+    return number_text(versus_spy, 1) + '/' + number_text(versus_qqq, 1);
+}
+
+[[nodiscard]] std::string_view compact_vwap_state(domain::VwapStructureState state)
+{
+    switch (state) {
+    case domain::VwapStructureState::unavailable:
+        return "-";
+    case domain::VwapStructureState::below:
+        return "BELOW";
+    case domain::VwapStructureState::reclaimed:
+        return "RCLM";
+    case domain::VwapStructureState::above_flat:
+        return "ABOVE";
+    case domain::VwapStructureState::above_rising:
+        return "RISE";
+    case domain::VwapStructureState::lost:
+        return "LOST";
+    }
+    return "?";
+}
+
 [[nodiscard]] RotationLayout rotation_layout(std::size_t columns)
 {
-    if (columns >= 136) {
+    if (columns >= 148) {
         return RotationLayout::regular;
     }
-    if (columns >= 100) {
+    if (columns >= 104) {
         return RotationLayout::compact;
     }
     return RotationLayout::minimal;
@@ -121,46 +171,48 @@ void print_responsive_rotation_header(
 )
 {
     if (layout == RotationLayout::regular) {
-        output << std::left << std::setw(7) << "symbol"
-               << std::right << std::setw(9) << "close"
-               << std::setw(9) << "VWAP"
-               << std::setw(7) << "RS %"
-               << std::setw(18) << "entry zone"
-               << "  " << std::setw(11) << "entry state"
-               << std::setw(7) << "long"
-               << std::setw(18) << "leveraged zone"
-               << "  " << std::setw(11) << "lev state"
-               << std::setw(10) << "phase"
-               << std::setw(6) << "score"
-               << std::setw(10) << "entry"
-               << std::setw(9) << "if held" << '\n';
+        output << std::left << std::setw(6) << "symbol"
+               << ' ' << std::setw(6) << "RVOL"
+               << ' ' << std::setw(7) << "VWAP st"
+               << ' ' << std::setw(9) << "15 S/Q"
+               << ' ' << std::setw(9) << "30 S/Q"
+               << ' ' << std::setw(9) << "60 S/Q"
+               << ' ' << std::setw(16) << "entry zone"
+               << ' ' << std::setw(10) << "entry state"
+               << ' ' << std::setw(6) << "long"
+               << ' ' << std::setw(16) << "leveraged zone"
+               << ' ' << std::setw(10) << "lev state"
+               << ' ' << std::setw(9) << "phase"
+               << ' ' << std::setw(5) << "score"
+               << ' ' << std::setw(8) << "entry"
+               << ' ' << std::setw(7) << "if held" << '\n';
         return;
     }
 
     if (layout == RotationLayout::compact) {
-        output << std::left << std::setw(6) << "sym"
-               << std::right << std::setw(7) << "RS %"
-               << std::setw(15) << "entry zone"
-               << "  " << std::setw(8) << "state"
-               << std::setw(6) << "long"
-               << std::setw(15) << "lev zone"
-               << "  " << std::setw(8) << "state"
-               << std::setw(9) << "phase"
-               << std::setw(5) << "score"
-               << std::setw(9) << "entry"
-               << std::setw(8) << "held" << '\n';
+        output << std::left << std::setw(5) << "sym"
+               << ' ' << std::setw(6) << "RVOL"
+               << ' ' << std::setw(6) << "VWAP"
+               << ' ' << std::setw(9) << "15 S/Q"
+               << ' ' << std::setw(9) << "60 S/Q"
+               << ' ' << std::setw(13) << "entry zone"
+               << ' ' << std::setw(6) << "state"
+               << ' ' << std::setw(5) << "long"
+               << ' ' << std::setw(13) << "lev zone"
+               << ' ' << std::setw(6) << "state"
+               << ' ' << std::setw(8) << "phase"
+               << ' ' << std::setw(5) << "score" << '\n';
         return;
     }
 
-    output << std::left << std::setw(6) << "sym"
-           << std::right << std::setw(7) << "RS %"
-           << std::setw(14) << "entry zone"
-           << "  " << std::setw(7) << "state"
-           << std::setw(6) << "long"
-           << std::setw(14) << "lev zone"
-           << "  " << std::setw(7) << "state"
-           << std::setw(8) << "phase"
-           << std::setw(5) << "score" << '\n';
+    output << std::left << std::setw(5) << "sym"
+           << ' ' << std::setw(5) << "RVOL"
+           << ' ' << std::setw(5) << "VWAP"
+           << ' ' << std::setw(8) << "60 S/Q"
+           << ' ' << std::setw(11) << "entry zone"
+           << ' ' << std::setw(5) << "state"
+           << ' ' << std::setw(7) << "phase"
+           << ' ' << std::setw(4) << "scr" << '\n';
 }
 
 void print_responsive_rotation_rank(
@@ -171,69 +223,85 @@ void print_responsive_rotation_rank(
 {
     const auto& rank = *row.rank;
     if (layout == RotationLayout::regular) {
-        output << std::left << std::setw(7) << fit_text(rank.symbol, 6)
-               << std::right << std::setw(9) << std::fixed << std::setprecision(2)
-               << rank.close;
-        if (rank.session_vwap.has_value()) {
-            output << std::setw(9) << *rank.session_vwap;
-        } else {
-            output << std::setw(9) << '-';
-        }
-        output << std::setw(7) << std::setprecision(2)
-               << rank.relative_change_60_min_percent
-               << std::setw(18) << compact_zone_text(rank.entry_zone, 17)
-               << "  " << std::setw(11)
+        output << std::left << std::setw(6) << fit_text(rank.symbol, 6)
+               << ' ' << std::right << std::setw(6)
+               << fit_text(ratio_text(rank.relative_volume.bar_ratio), 6)
+               << ' ' << std::setw(7) << compact_vwap_state(rank.vwap_structure)
+               << ' ' << std::setw(9) << rs_pair_text(
+                      rank.relative_strength_vs_spy.fifteen_minute_percent,
+                      rank.relative_strength_vs_qqq.fifteen_minute_percent
+                  )
+               << ' ' << std::setw(9) << rs_pair_text(
+                      rank.relative_strength_vs_spy.thirty_minute_percent,
+                      rank.relative_strength_vs_qqq.thirty_minute_percent
+                  )
+               << ' ' << std::setw(9) << rs_pair_text(
+                      rank.relative_strength_vs_spy.sixty_minute_percent,
+                      rank.relative_strength_vs_qqq.sixty_minute_percent
+                  )
+               << ' ' << std::setw(16) << compact_zone_text(rank.entry_zone, 16)
+               << ' ' << std::setw(10)
                << fit_text(entry_zone_state(rank.entry_zone), 10)
-               << std::setw(7) << fit_text(symbol_or_dash(rank.leveraged_long_symbol), 6)
-               << std::setw(18) << compact_zone_text(rank.leveraged_entry_zone, 17)
-               << "  " << std::setw(11)
+               << ' ' << std::setw(6)
+               << fit_text(symbol_or_dash(rank.leveraged_long_symbol), 6)
+               << ' ' << std::setw(16)
+               << compact_zone_text(rank.leveraged_entry_zone, 16)
+               << ' ' << std::setw(10)
                << fit_text(entry_zone_state(rank.leveraged_entry_zone), 10)
-               << std::setw(10)
+               << ' ' << std::setw(9)
                << fit_text(domain::to_string(rank.long_opportunity.phase), 9)
-               << std::setw(6) << rank.long_opportunity.bullish_score
-               << std::setw(10)
-               << fit_text(domain::to_string(rank.long_opportunity.entry), 9)
-               << std::setw(9)
-               << fit_text(domain::to_string(rank.long_opportunity.if_held), 8)
-               << '\n';
-        return;
-    }
-
-    if (layout == RotationLayout::compact) {
-        output << std::left << std::setw(6) << fit_text(rank.symbol, 5)
-               << std::right << std::fixed << std::setprecision(2)
-               << std::setw(7) << rank.relative_change_60_min_percent
-               << std::setw(15) << compact_zone_text(rank.entry_zone, 14)
-               << "  " << std::setw(8)
-               << fit_text(compact_zone_state(rank.entry_zone), 7)
-               << std::setw(6) << fit_text(symbol_or_dash(rank.leveraged_long_symbol), 5)
-               << std::setw(15) << compact_zone_text(rank.leveraged_entry_zone, 14)
-               << "  " << std::setw(8)
-               << fit_text(compact_zone_state(rank.leveraged_entry_zone), 7)
-               << std::setw(9)
-               << fit_text(domain::to_string(rank.long_opportunity.phase), 8)
-               << std::setw(5) << rank.long_opportunity.bullish_score
-               << std::setw(9)
+               << ' ' << std::setw(5) << rank.long_opportunity.bullish_score
+               << ' ' << std::setw(8)
                << fit_text(domain::to_string(rank.long_opportunity.entry), 8)
-               << std::setw(8)
+               << ' ' << std::setw(7)
                << fit_text(domain::to_string(rank.long_opportunity.if_held), 7)
                << '\n';
         return;
     }
 
-    output << std::left << std::setw(6) << fit_text(rank.symbol, 5)
-           << std::right << std::fixed << std::setprecision(2)
-           << std::setw(7) << rank.relative_change_60_min_percent
-           << std::setw(14) << compact_zone_text(rank.entry_zone, 13)
-           << "  " << std::setw(7)
-           << fit_text(compact_zone_state(rank.entry_zone), 6)
-           << std::setw(6) << fit_text(symbol_or_dash(rank.leveraged_long_symbol), 5)
-           << std::setw(14) << compact_zone_text(rank.leveraged_entry_zone, 13)
-           << "  " << std::setw(7)
-           << fit_text(compact_zone_state(rank.leveraged_entry_zone), 6)
-           << std::setw(8)
+    if (layout == RotationLayout::compact) {
+        output << std::left << std::setw(5) << fit_text(rank.symbol, 5)
+               << ' ' << std::right << std::setw(6)
+               << fit_text(ratio_text(rank.relative_volume.bar_ratio), 6)
+               << ' ' << std::setw(6) << compact_vwap_state(rank.vwap_structure)
+               << ' ' << std::setw(9) << rs_pair_text(
+                      rank.relative_strength_vs_spy.fifteen_minute_percent,
+                      rank.relative_strength_vs_qqq.fifteen_minute_percent
+                  )
+               << ' ' << std::setw(9) << rs_pair_text(
+                      rank.relative_strength_vs_spy.sixty_minute_percent,
+                      rank.relative_strength_vs_qqq.sixty_minute_percent
+                  )
+               << ' ' << std::setw(13) << compact_zone_text(rank.entry_zone, 13)
+               << ' ' << std::setw(6)
+               << fit_text(compact_zone_state(rank.entry_zone), 6)
+               << ' ' << std::setw(5)
+               << fit_text(symbol_or_dash(rank.leveraged_long_symbol), 5)
+               << ' ' << std::setw(13)
+               << compact_zone_text(rank.leveraged_entry_zone, 13)
+               << ' ' << std::setw(6)
+               << fit_text(compact_zone_state(rank.leveraged_entry_zone), 6)
+               << ' ' << std::setw(8)
+               << fit_text(domain::to_string(rank.long_opportunity.phase), 8)
+               << ' ' << std::setw(5) << rank.long_opportunity.bullish_score
+               << '\n';
+        return;
+    }
+
+    output << std::left << std::setw(5) << fit_text(rank.symbol, 5)
+           << ' ' << std::right << std::setw(5)
+           << fit_text(ratio_text(rank.relative_volume.bar_ratio), 5)
+           << ' ' << std::setw(5) << compact_vwap_state(rank.vwap_structure)
+           << ' ' << std::setw(8) << fit_text(rs_pair_text(
+                  rank.relative_strength_vs_spy.sixty_minute_percent,
+                  rank.relative_strength_vs_qqq.sixty_minute_percent
+              ), 8)
+           << ' ' << std::setw(11) << compact_zone_text(rank.entry_zone, 11)
+           << ' ' << std::setw(5)
+           << fit_text(compact_zone_state(rank.entry_zone), 5)
+           << ' ' << std::setw(7)
            << fit_text(domain::to_string(rank.long_opportunity.phase), 7)
-           << std::setw(5) << rank.long_opportunity.bullish_score << '\n';
+           << ' ' << std::setw(4) << rank.long_opportunity.bullish_score << '\n';
 }
 
 [[nodiscard]] std::string rotation_header_line(RotationLayout layout)
@@ -330,7 +398,7 @@ void print_responsive_rotation_rank(
     if (!candidate.has_value()) {
         return "candidate: NONE";
     }
-    if (candidate->side == domain::TradeSide::short_side) {
+    if (candidate->side == domain::CandidateSide::short_side) {
         return "short reference: " + candidate->trade_symbol
             + " from " + candidate->signal_symbol;
     }
@@ -367,7 +435,10 @@ void print_market_snapshot(std::ostream& output, const domain::EtfSnapshot& snap
     } else {
         output << std::setw(12) << '-';
     }
-    output << std::setw(12) << snapshot.ema20
+    output << std::setw(10) << domain::to_string(snapshot.vwap_structure)
+           << std::setw(9) << ratio_text(snapshot.relative_volume.bar_ratio)
+           << std::setw(9) << ratio_text(snapshot.relative_volume.cumulative_ratio)
+           << std::setw(12) << snapshot.ema20
            << std::setw(12) << std::setprecision(4) << snapshot.ema20_change_percent
            << std::setw(10) << domain::to_string(snapshot.trend_signal)
            << '\n';
@@ -404,7 +475,14 @@ void print_rotation_table_header(std::ostream& output)
            << std::right << std::setw(11) << "close"
            << std::setw(11) << "VWAP"
            << std::setw(10) << "EMA %"
-           << std::setw(11) << "RS %"
+           << std::setw(10) << "VWAP st"
+           << std::setw(9) << "RVOL"
+           << std::setw(9) << "S15 %"
+           << std::setw(9) << "S30 %"
+           << std::setw(9) << "S60 %"
+           << std::setw(9) << "Q15 %"
+           << std::setw(9) << "Q30 %"
+           << std::setw(9) << "Q60 %"
            << std::setw(24) << "entry zone"
            << std::setw(14) << "entry state"
            << std::setw(24) << "leveraged entry zone"
@@ -431,7 +509,26 @@ void print_rotation_rank(std::ostream& output, const domain::RankedEtf& rank)
     }
     output << std::setw(10) << std::setprecision(3)
            << rank.ema20_change_percent
-           << std::setw(11) << rank.relative_change_60_min_percent
+           << std::setw(10) << domain::to_string(rank.vwap_structure)
+           << std::setw(9) << ratio_text(rank.relative_volume.bar_ratio)
+           << std::setw(9) << number_text(
+                  rank.relative_strength_vs_spy.fifteen_minute_percent
+              )
+           << std::setw(9) << number_text(
+                  rank.relative_strength_vs_spy.thirty_minute_percent
+              )
+           << std::setw(9) << number_text(
+                  rank.relative_strength_vs_spy.sixty_minute_percent
+              )
+           << std::setw(9) << number_text(
+                  rank.relative_strength_vs_qqq.fifteen_minute_percent
+              )
+           << std::setw(9) << number_text(
+                  rank.relative_strength_vs_qqq.thirty_minute_percent
+              )
+           << std::setw(9) << number_text(
+                  rank.relative_strength_vs_qqq.sixty_minute_percent
+              )
            << std::setw(24) << entry_zone_text(rank.entry_zone)
            << std::setw(14) << entry_zone_state(rank.entry_zone)
            << std::setw(24) << entry_zone_text(rank.leveraged_entry_zone)
@@ -469,7 +566,8 @@ void print_rotation_section(
     const std::vector<domain::RankedEtf>& rankings
 )
 {
-    output << "\n" << title << " (60-minute relative strength vs SPY)\n";
+    output << "\n" << title
+           << " (RS 15/30/60 minutes; S=vs SPY, Q=vs QQQ)\n";
     const auto groups = analysis::RotationGrouper{}.group(rankings);
     print_rotation_group(output, "STRONG", groups.strong);
     print_rotation_group(output, "NEUTRAL", groups.neutral);
@@ -489,7 +587,7 @@ void print_directional_candidate(
         return;
     }
 
-    if (candidate->side == domain::TradeSide::short_side) {
+    if (candidate->side == domain::CandidateSide::short_side) {
         output << "bearish reference ETF only (not monitored, no order): "
                << candidate->trade_symbol << " from "
                << candidate->signal_symbol << " signal\n";
@@ -536,6 +634,9 @@ void print_market_section(std::ostream& output, const domain::MarketScan& scan)
     output << std::left << std::setw(8) << "symbol"
            << std::right << std::setw(12) << "close"
            << std::setw(12) << "VWAP"
+           << std::setw(10) << "VWAP st"
+           << std::setw(9) << "RVOL"
+           << std::setw(9) << "cum RVOL"
            << std::setw(12) << "EMA20"
            << std::setw(12) << "EMA20 %"
            << std::setw(10) << "signal" << '\n';
@@ -559,6 +660,147 @@ void print_market_section(std::ostream& output, const domain::MarketScan& scan)
            << std::setw(12) << scan.vix->ema20
            << std::setw(14) << std::setprecision(3) << scan.vix->change_60_min_percent
            << std::setw(12) << domain::to_string(scan.vix->trend) << '\n';
+}
+
+void print_trade_section(
+    std::ostream& output,
+    const domain::MarketScan& scan,
+    const time::TimeZoneFormatter& formatter,
+    std::size_t columns
+)
+{
+    const auto& context = scan.live_context;
+    const bool compact = columns < 90;
+    const bool regular_session = context.updated_epoch_seconds > 0
+        && formatter.minutes_since_midnight(context.updated_epoch_seconds) >= 9 * 60 + 30
+        && formatter.minutes_since_midnight(context.updated_epoch_seconds) < 16 * 60;
+    output << "LIVE TRADE CONTEXT (read-only; MFE starts when this process observes the lot)\n";
+    if (context.updated_epoch_seconds > 0) {
+        output << "Live update: " << formatter.format(context.updated_epoch_seconds) << '\n';
+    } else {
+        output << "Live context is connecting on the secondary IBKR client\n";
+    }
+
+    output << "\nPOSITIONS\n";
+    if (!context.positions_ready) {
+        output << "Waiting for the initial IBKR position snapshot\n";
+    } else if (context.positions.empty()) {
+        output << "No open stock positions\n";
+    } else {
+        if (compact) {
+            output << std::left << std::setw(6) << "symbol"
+                   << ' ' << std::setw(8) << "qty"
+                   << ' ' << std::setw(8) << "avg"
+                   << ' ' << std::setw(8) << "mark"
+                   << ' ' << std::setw(9) << "uPnL"
+                   << ' ' << std::setw(9) << "peak MFE"
+                   << ' ' << std::setw(9) << "giveback"
+                   << ' ' << std::setw(6) << "gb%" << '\n';
+        } else {
+            output << std::left << std::setw(8) << "symbol"
+                   << ' ' << std::setw(11) << "quantity"
+                   << ' ' << std::setw(11) << "avg cost"
+                   << ' ' << std::setw(11) << "mark"
+                   << ' ' << std::setw(12) << "uPnL"
+                   << ' ' << std::setw(12) << "peak MFE"
+                   << ' ' << std::setw(12) << "giveback"
+                   << ' ' << std::setw(11) << "giveback%" << '\n';
+        }
+        for (const auto& position : context.positions) {
+            if (compact) {
+                output << std::left << std::setw(6) << fit_text(position.symbol, 6)
+                       << ' ' << std::right << std::fixed << std::setprecision(2)
+                       << std::setw(8) << position.quantity
+                       << ' ' << std::setw(8) << position.average_cost
+                       << ' ' << std::setw(8) << number_text(position.market_price)
+                       << ' ' << std::setw(9) << number_text(position.unrealized_pnl)
+                       << ' ' << std::setw(9)
+                       << number_text(position.peak_unrealized_pnl)
+                       << ' ' << std::setw(9) << number_text(position.giveback_amount)
+                       << ' ' << std::setw(6)
+                       << number_text(position.giveback_percent, 1) << '\n';
+            } else {
+                output << std::left << std::setw(8) << fit_text(position.symbol, 8)
+                       << ' ' << std::right << std::fixed << std::setprecision(2)
+                       << std::setw(11) << position.quantity
+                       << ' ' << std::setw(11) << position.average_cost
+                       << ' ' << std::setw(11) << number_text(position.market_price)
+                       << ' ' << std::setw(12) << number_text(position.unrealized_pnl)
+                       << ' ' << std::setw(12)
+                       << number_text(position.peak_unrealized_pnl)
+                       << ' ' << std::setw(12) << number_text(position.giveback_amount)
+                       << ' ' << std::setw(11)
+                       << number_text(position.giveback_percent, 1) << '\n';
+            }
+        }
+    }
+
+    output << "\nLIVE ORDER FLOW (price-forming Last + BidAsk; rolling 30s/60s)\n";
+    if (!context.order_flow_connected) {
+        output << "Waiting for QQQ/SOXX tick-by-tick subscriptions\n";
+        return;
+    }
+    if (!regular_session) {
+        output << "RTH session closed; DeltaRatio resumes at 09:30 America/New_York\n";
+    }
+    if (compact) {
+        output << std::left << std::setw(6) << "symbol"
+               << ' ' << std::setw(7) << "Delta30"
+               << ' ' << std::setw(7) << "Delta60"
+               << ' ' << std::setw(7) << "accel"
+               << ' ' << std::setw(13) << "pressure"
+               << ' ' << std::setw(7) << "quality"
+               << ' ' << std::setw(7) << "trades"
+               << ' ' << std::setw(7) << "state" << '\n';
+    } else {
+        output << std::left << std::setw(8) << "symbol"
+               << ' ' << std::setw(10) << "Delta30"
+               << ' ' << std::setw(10) << "Delta60"
+               << ' ' << std::setw(10) << "accel"
+               << ' ' << std::setw(17) << "pressure"
+               << ' ' << std::setw(10) << "quality"
+               << ' ' << std::setw(9) << "trades"
+               << ' ' << std::setw(8) << "state" << '\n';
+    }
+    for (const auto& flow : context.order_flow) {
+        const auto acceleration = flow.assessment.has_value()
+            ? flow.assessment->delta_acceleration_points
+            : std::nullopt;
+        const auto pressure = flow.assessment.has_value()
+            ? domain::to_string(flow.assessment->pressure)
+            : "NO_DATA";
+        const auto quality = flow.assessment.has_value()
+            ? std::optional<double>{flow.assessment->evidence_quality_percent}
+            : std::nullopt;
+        const auto state = !regular_session
+            ? "CLOSED"
+            : (flow.thirty_seconds.complete && flow.one_minute.complete
+                ? "YES"
+                : "WARM");
+        if (compact) {
+            output << std::left << std::setw(6) << fit_text(flow.symbol, 6)
+                   << ' ' << std::right << std::setw(7)
+                   << number_text(flow.thirty_seconds.flow.delta_ratio_percent, 1)
+                   << ' ' << std::setw(7)
+                   << number_text(flow.one_minute.flow.delta_ratio_percent, 1)
+                   << ' ' << std::setw(7) << number_text(acceleration, 1)
+                   << ' ' << std::setw(13) << fit_text(pressure, 13)
+                   << ' ' << std::setw(7) << number_text(quality, 0)
+                   << ' ' << std::setw(7) << flow.thirty_seconds.flow.trade_count
+                   << ' ' << std::setw(7) << state << '\n';
+        } else {
+            output << std::left << std::setw(8) << fit_text(flow.symbol, 8)
+                   << ' ' << std::right << std::setw(10)
+                   << number_text(flow.thirty_seconds.flow.delta_ratio_percent, 1)
+                   << ' ' << std::setw(10)
+                   << number_text(flow.one_minute.flow.delta_ratio_percent, 1)
+                   << ' ' << std::setw(10) << number_text(acceleration, 1)
+                   << ' ' << std::setw(17) << pressure
+                   << ' ' << std::setw(10) << number_text(quality, 0)
+                   << ' ' << std::setw(9) << flow.thirty_seconds.flow.trade_count
+                   << ' ' << std::setw(8) << state << '\n';
+        }
+    }
 }
 
 } // namespace
@@ -593,6 +835,9 @@ std::string ConsoleScanPrinter::render(
         print_rotation_section(output, "INDUSTRY ROTATION", scan.rankings);
         print_directional_candidate(output, "Industry", scan.candidate, scan.rankings);
         break;
+    case DashboardTab::trade:
+        print_trade_section(output, scan, formatter, 200);
+        break;
     }
     return output.str();
 }
@@ -619,6 +864,16 @@ DashboardPage ConsoleScanPrinter::render_page(
         std::ostringstream market;
         print_market_section(market, scan);
         std::istringstream lines{market.str()};
+        std::string line;
+        while (std::getline(lines, line)) {
+            output << clipped_line(std::move(line), viewport.columns) << '\n';
+        }
+        return DashboardPage{.text = clip_lines(output.str(), viewport.columns)};
+    }
+    if (tab == DashboardTab::trade) {
+        std::ostringstream trade;
+        print_trade_section(trade, scan, formatter, viewport.columns);
+        std::istringstream lines{trade.str()};
         std::string line;
         while (std::getline(lines, line)) {
             output << clipped_line(std::move(line), viewport.columns) << '\n';
@@ -652,7 +907,7 @@ DashboardPage ConsoleScanPrinter::render_page(
     );
 
     output << clipped_line(
-        title + " | grouped by relative strength",
+        title + " | RS S/Q = vs SPY/QQQ",
         viewport.columns
     ) << '\n';
     if (!pages.empty()) {
@@ -689,6 +944,8 @@ std::string ConsoleScanPrinter::render_all(const domain::MarketScan& scan) const
     );
     print_rotation_section(output, "INDUSTRY ROTATION", scan.rankings);
     print_directional_candidate(output, "Industry", scan.candidate, scan.rankings);
+    output << '\n';
+    print_trade_section(output, scan, formatter, 200);
     return output.str();
 }
 

@@ -21,7 +21,7 @@ std::optional<domain::TradeCandidate> LeveragedEtfSelector::select(
             return domain::TradeCandidate{
                 .signal_symbol = candidate->symbol,
                 .trade_symbol = candidate->leveraged_long_symbol,
-                .side = domain::TradeSide::long_side,
+                .side = domain::CandidateSide::long_side,
             };
         }
     }
@@ -38,7 +38,7 @@ std::optional<domain::TradeCandidate> LeveragedEtfSelector::select(
             return domain::TradeCandidate{
                 .signal_symbol = candidate->symbol,
                 .trade_symbol = candidate->leveraged_short_symbol,
-                .side = domain::TradeSide::short_side,
+                .side = domain::CandidateSide::short_side,
             };
         }
     }

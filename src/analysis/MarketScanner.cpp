@@ -4,6 +4,7 @@
 #include "daytrader/analysis/LongOpportunityAnalyzer.hpp"
 #include "daytrader/analysis/MarketRegimeAnalyzer.hpp"
 #include "daytrader/analysis/RelativeStrengthRanker.hpp"
+#include "daytrader/analysis/RelativeStrengthAnalyzer.hpp"
 #include "daytrader/analysis/VixAnalyzer.hpp"
 #include "daytrader/market_data/BarSeriesAligner.hpp"
 #include "daytrader/market_data/InstrumentBarsLookup.hpp"
@@ -75,6 +76,16 @@ namespace {
         auto rank = ranker.rank(etf, pairs, required_timestamp, time_formatter);
         if (!rank.has_value()) {
             continue;
+        }
+
+        const auto signal_vs_qqq = aligner.align_completed(
+            bars.at(etf.market_data.symbol),
+            bars.at("QQQ")
+        );
+        if (!signal_vs_qqq.empty()
+            && signal_vs_qqq.back().epoch_seconds == required_timestamp) {
+            rank->relative_strength_vs_qqq =
+                RelativeStrengthAnalyzer{}.analyze(signal_vs_qqq);
         }
 
         rank->entry_zone = calculate_entry_zone(
