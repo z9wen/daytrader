@@ -87,15 +87,19 @@ add_library(daytrader_core
     src/analysis/EntryZoneCalculator.cpp
     src/analysis/EtfSnapshotCalculator.cpp
     src/analysis/LongOpportunityAnalyzer.cpp
+    src/analysis/LiveTradeContextEnricher.cpp
     src/analysis/MarketRegimeAnalyzer.cpp
     src/analysis/MarketScanner.cpp
     src/analysis/OrderFlowAggregator.cpp
     src/analysis/OrderFlowSignalAnalyzer.cpp
     src/analysis/OrderFlowWindowAnalyzer.cpp
+    src/analysis/RelativeStrengthAnalyzer.cpp
     src/analysis/RelativeStrengthRanker.cpp
+    src/analysis/RelativeVolumeAnalyzer.cpp
     src/analysis/RotationGrouper.cpp
     src/analysis/TradeClassifier.cpp
     src/analysis/VixAnalyzer.cpp
+    src/analysis/VwapStructureAnalyzer.cpp
     src/app/Application.cpp
     src/backtest/DayTradeBacktester.cpp
     src/backtest/IbkrBacktestRunner.cpp
@@ -103,11 +107,16 @@ add_library(daytrader_core
     src/config/AppConfig.cpp
     src/ibkr/HistoricalRequestPacer.cpp
     src/ibkr/TwsHistoricalTickClient.cpp
+    src/ibkr/TwsLiveContextClient.cpp
     src/ibkr/TwsMarketDataClient.cpp
     src/indicators/TechnicalIndicators.cpp
+    src/live/LiveOrderFlowTracker.cpp
+    src/live/LiveTradeContextStore.cpp
+    src/live/PositionTracker.cpp
     src/market_data/BarSeriesAligner.cpp
     src/market_data/CompletedBarSynchronizer.cpp
     src/market_data/InstrumentBarsLookup.cpp
+    src/market_data/InstrumentBarsMerger.cpp
     src/monitoring/MarketMonitor.cpp
     src/presentation/ConsoleScanPrinter.cpp
     src/presentation/BacktestReportPrinter.cpp
@@ -170,4 +179,5 @@ if(BUILD_TESTING)
     daytrader_add_test(daytrader_backtester_tests tests/DayTradeBacktesterTests.cpp)
     daytrader_add_test(daytrader_market_data_store_tests tests/MarketDataCsvStoreTests.cpp)
     daytrader_add_test(daytrader_order_flow_tests tests/OrderFlowTests.cpp)
+    daytrader_add_test(daytrader_live_trade_context_tests tests/LiveTradeContextTests.cpp)
 endif()

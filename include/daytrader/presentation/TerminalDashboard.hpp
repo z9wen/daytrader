@@ -7,7 +7,7 @@
 
 namespace daytrader::presentation {
 
-// Alternate-screen TUI that redraws one cached scan and captures Tab/1/2/3 keys.
+// Alternate-screen TUI that redraws one cached scan and captures Tab/1/2/3/4 keys.
 // Terminal state is restored by stop() and by the destructor on every exit path.
 class TerminalDashboard {
 public:

@@ -83,6 +83,7 @@ void bullish_market_selects_strongest_leveraged_industry()
     auto instruments = std::vector<InstrumentBars>{
         make_bars("SPY", 100.0, 1.0005),
         make_bars("QQQ", 200.0, 1.0010),
+        make_bars("TQQQ", 80.0, 1.0030),
         make_bars("VIX", 16.0, 1.0010),
         make_bars("XLK", 180.0, 1.0020),
         make_bars("XBI", 150.0, 1.0015),
@@ -109,6 +110,16 @@ void bullish_market_selects_strongest_leveraged_industry()
         scan.qqq.trend_signal == daytrader::domain::MarketTrendSignal::strong,
         "expected a strong QQQ trend signal"
     );
+    require(scan.tqqq.has_value(), "expected a TQQQ execution snapshot");
+    require(
+        scan.tqqq->trend_signal == daytrader::domain::MarketTrendSignal::strong,
+        "expected a strong TQQQ execution signal"
+    );
+    require(
+        scan.tqqq_entry_zone.has_value()
+            && scan.tqqq_entry_zone->symbol == "TQQQ",
+        "expected a separate TQQQ execution entry zone"
+    );
     require(scan.aligned_market_bar_count == 39, "expected timestamp intersection");
     require(scan.vix.has_value(), "expected an optional VIX snapshot");
     require(
@@ -119,6 +130,17 @@ void bullish_market_selects_strongest_leveraged_industry()
     require(scan.sector_rankings.front().symbol == "XLK", "expected XLK sector rank");
     require(scan.rankings.size() == 2, "expected only industry ETFs to be ranked");
     require(scan.rankings.front().symbol == "SOXX", "expected SOXX to rank first");
+    require(
+        scan.rankings.front().relative_strength_vs_spy.fifteen_minute_percent.has_value()
+            && scan.rankings.front().relative_strength_vs_spy.thirty_minute_percent.has_value()
+            && scan.rankings.front().relative_strength_vs_spy.sixty_minute_percent.has_value(),
+        "expected SOXX 15/30/60-minute RS versus SPY"
+    );
+    require(
+        scan.rankings.front().relative_strength_vs_qqq.fifteen_minute_percent.has_value()
+            && scan.rankings.front().relative_strength_vs_qqq.sixty_minute_percent.has_value(),
+        "expected SOXX multi-period RS versus QQQ"
+    );
     require(scan.rankings.front().entry_zone.has_value(), "expected SOXX entry zone");
     require(
         scan.rankings.front().entry_zone->symbol == "SOXX",
@@ -145,6 +167,7 @@ void bearish_market_selects_weakest_inverse_industry()
     const auto instruments = std::vector<InstrumentBars>{
         make_bars("SPY", 100.0, 0.9995),
         make_bars("QQQ", 200.0, 0.9990),
+        make_bars("TQQQ", 80.0, 0.9970),
         make_bars("XLK", 180.0, 0.9980),
         make_bars("XBI", 150.0, 0.9985),
         make_bars("SOXX", 300.0, 0.9970),

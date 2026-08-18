@@ -14,6 +14,11 @@ namespace daytrader::config {
 struct MonitoringSettings {
     std::chrono::seconds bar_interval{std::chrono::minutes{5}};
     std::chrono::seconds reconnect_delay{5};
+    // Fast live bootstrap; the scanner merges this with its durable bar cache.
+    std::string history_duration{"2 D"};
+    std::size_t history_maximum_bars{4'096};
+    std::chrono::seconds initial_data_timeout{60};
+    int live_context_client_id{8};
 };
 
 // Complete immutable configuration assembled once at application startup.

@@ -26,4 +26,10 @@ namespace daytrader::universe {
     std::span<const EtfDefinition> etfs
 );
 
+// Account positions outside the configured signal/long-leveraged universe are
+// long-term portfolio holdings, not lots managed by this day-trading tool.
+[[nodiscard]] std::vector<std::string> day_trade_position_symbols(
+    std::span<const EtfDefinition> etfs
+);
+
 } // namespace daytrader::universe

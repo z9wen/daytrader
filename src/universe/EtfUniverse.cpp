@@ -154,4 +154,29 @@ std::vector<std::string> signal_symbols(std::span<const EtfDefinition> etfs)
     return symbols;
 }
 
+std::vector<std::string> day_trade_position_symbols(
+    std::span<const EtfDefinition> etfs
+)
+{
+    std::vector<std::string> symbols;
+    std::unordered_set<std::string> seen;
+    symbols.reserve(etfs.size() * 2);
+    const auto append = [&](const std::string& symbol) {
+        if (!symbol.empty() && seen.insert(symbol).second) {
+            symbols.push_back(symbol);
+        }
+    };
+
+    for (const auto& etf : etfs) {
+        append(etf.market_data.symbol);
+        // SPXL is intentionally absent until SPY receives a displayed
+        // leveraged entry zone; QQQ/TQQQ and the rotation pairs are included.
+        if (etf.group != EtfGroup::broad_market
+            || etf.market_data.symbol == "QQQ") {
+            append(etf.leveraged_long_symbol);
+        }
+    }
+    return symbols;
+}
+
 } // namespace daytrader::universe

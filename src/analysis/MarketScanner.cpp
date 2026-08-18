@@ -1,9 +1,11 @@
 #include "daytrader/analysis/MarketScanner.hpp"
 
 #include "daytrader/analysis/EntryZoneCalculator.hpp"
+#include "daytrader/analysis/EtfSnapshotCalculator.hpp"
 #include "daytrader/analysis/LongOpportunityAnalyzer.hpp"
 #include "daytrader/analysis/MarketRegimeAnalyzer.hpp"
 #include "daytrader/analysis/RelativeStrengthRanker.hpp"
+#include "daytrader/analysis/RelativeStrengthAnalyzer.hpp"
 #include "daytrader/analysis/VixAnalyzer.hpp"
 #include "daytrader/market_data/BarSeriesAligner.hpp"
 #include "daytrader/market_data/InstrumentBarsLookup.hpp"
@@ -21,12 +23,11 @@
 namespace daytrader::analysis {
 namespace {
 
-[[nodiscard]] std::optional<domain::EntryZone> calculate_entry_zone(
+[[nodiscard]] std::optional<std::vector<const domain::MarketBar*>> completed_bars_for(
     const std::string& symbol,
     const market_data::InstrumentBarsLookup& bars,
     const market_data::BarSeriesAligner& aligner,
-    std::int64_t required_timestamp,
-    const time::TimeZoneFormatter& time_formatter
+    std::int64_t required_timestamp
 )
 {
     const auto* instrument_bars = bars.find(symbol);
@@ -44,9 +45,53 @@ namespace {
     for (const auto& pair : aligned) {
         completed_bars.push_back(pair.signal);
     }
+    return completed_bars;
+}
+
+[[nodiscard]] std::optional<domain::EntryZone> calculate_entry_zone(
+    const std::string& symbol,
+    const market_data::InstrumentBarsLookup& bars,
+    const market_data::BarSeriesAligner& aligner,
+    std::int64_t required_timestamp,
+    const time::TimeZoneFormatter& time_formatter
+)
+{
+    const auto completed_bars = completed_bars_for(
+        symbol,
+        bars,
+        aligner,
+        required_timestamp
+    );
+    if (!completed_bars.has_value()) {
+        return std::nullopt;
+    }
     return EntryZoneCalculator{}.calculate(
         symbol,
-        completed_bars,
+        *completed_bars,
+        time_formatter
+    );
+}
+
+[[nodiscard]] std::optional<domain::EtfSnapshot> calculate_snapshot(
+    const std::string& symbol,
+    const market_data::InstrumentBarsLookup& bars,
+    const market_data::BarSeriesAligner& aligner,
+    std::int64_t required_timestamp,
+    const time::TimeZoneFormatter& time_formatter
+)
+{
+    const auto completed_bars = completed_bars_for(
+        symbol,
+        bars,
+        aligner,
+        required_timestamp
+    );
+    if (!completed_bars.has_value()) {
+        return std::nullopt;
+    }
+    return EtfSnapshotCalculator{}.calculate(
+        symbol,
+        *completed_bars,
         time_formatter
     );
 }
@@ -75,6 +120,16 @@ namespace {
         auto rank = ranker.rank(etf, pairs, required_timestamp, time_formatter);
         if (!rank.has_value()) {
             continue;
+        }
+
+        const auto signal_vs_qqq = aligner.align_completed(
+            bars.at(etf.market_data.symbol),
+            bars.at("QQQ")
+        );
+        if (!signal_vs_qqq.empty()
+            && signal_vs_qqq.back().epoch_seconds == required_timestamp) {
+            rank->relative_strength_vs_qqq =
+                RelativeStrengthAnalyzer{}.analyze(signal_vs_qqq);
         }
 
         rank->entry_zone = calculate_entry_zone(
@@ -137,6 +192,20 @@ domain::MarketScan MarketScanner::scan(
     const market_data::BarSeriesAligner aligner{bar_interval_};
     const auto market_pairs = aligner.align_completed(bars.at("QQQ"), bars.at("SPY"));
     auto market = MarketRegimeAnalyzer{}.analyze(market_pairs, time_formatter_);
+    auto tqqq = calculate_snapshot(
+        "TQQQ",
+        bars,
+        aligner,
+        market.epoch_seconds,
+        time_formatter_
+    );
+    auto tqqq_entry_zone = calculate_entry_zone(
+        "TQQQ",
+        bars,
+        aligner,
+        market.epoch_seconds,
+        time_formatter_
+    );
     std::optional<domain::VolatilitySnapshot> vix;
     if (const auto* vix_bars = bars.find("VIX"); vix_bars != nullptr) {
         const auto vix_pairs = aligner.align_completed(*vix_bars, bars.at("SPY"));
@@ -170,6 +239,8 @@ domain::MarketScan MarketScanner::scan(
         .aligned_market_bar_count = market.aligned_bar_count,
         .spy = std::move(market.spy),
         .qqq = std::move(market.qqq),
+        .tqqq = std::move(tqqq),
+        .tqqq_entry_zone = std::move(tqqq_entry_zone),
         .vix = std::move(vix),
         .market_regime = market.regime,
         .sector_rankings = std::move(sector_rankings),

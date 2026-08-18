@@ -2,6 +2,7 @@
 
 #include "daytrader/backtest/DayTradeBacktester.hpp"
 #include "daytrader/ibkr/TwsMarketDataClient.hpp"
+#include "daytrader/market_data/InstrumentBarsMerger.hpp"
 #include "daytrader/storage/MarketDataCsvStore.hpp"
 #include "daytrader/universe/EtfDefinition.hpp"
 
@@ -77,42 +78,6 @@ constexpr auto cache_refresh_age = std::chrono::hours{6};
     return request;
 }
 
-void merge_bars(
-    std::vector<domain::InstrumentBars>& destination,
-    std::vector<domain::InstrumentBars> batch
-)
-{
-    for (auto& incoming : batch) {
-        auto existing = std::ranges::find(
-            destination,
-            incoming.symbol,
-            &domain::InstrumentBars::symbol
-        );
-        if (existing == destination.end()) {
-            destination.push_back(std::move(incoming));
-            continue;
-        }
-        existing->bars.insert(
-            existing->bars.end(),
-            std::make_move_iterator(incoming.bars.begin()),
-            std::make_move_iterator(incoming.bars.end())
-        );
-    }
-}
-
-void sort_and_deduplicate(std::vector<domain::InstrumentBars>& instruments)
-{
-    for (auto& instrument : instruments) {
-        std::ranges::sort(instrument.bars, {}, &domain::MarketBar::epoch_seconds);
-        const auto duplicate = std::ranges::unique(
-            instrument.bars,
-            {},
-            &domain::MarketBar::epoch_seconds
-        );
-        instrument.bars.erase(duplicate.begin(), duplicate.end());
-    }
-}
-
 [[nodiscard]] std::vector<domain::InstrumentBars> fetch_history(
     const config::AppConfig& config,
     int calendar_days,
@@ -148,8 +113,11 @@ void sort_and_deduplicate(std::vector<domain::InstrumentBars>& instruments)
             std::chrono::seconds{90}
         );
         ibkr::TwsMarketDataClient client{std::move(connection)};
-        merge_bars(history, client.fetch_historical_bars(requests));
-        sort_and_deduplicate(history);
+        market_data::merge_instrument_bars(
+            history,
+            client.fetch_historical_bars(requests)
+        );
+        market_data::sort_and_deduplicate_bars(history);
         // Persist after every successful batch so an IBKR timeout never loses
         // all previously downloaded history.
         store.save(history);
@@ -194,8 +162,11 @@ void sort_and_deduplicate(std::vector<domain::InstrumentBars>& instruments)
         std::chrono::seconds{90}
     );
     ibkr::TwsMarketDataClient client{std::move(connection)};
-    merge_bars(history, client.fetch_historical_bars(requests));
-    sort_and_deduplicate(history);
+    market_data::merge_instrument_bars(
+        history,
+        client.fetch_historical_bars(requests)
+    );
+    market_data::sort_and_deduplicate_bars(history);
     store.save(history);
     return history;
 }
@@ -207,7 +178,7 @@ void sort_and_deduplicate(std::vector<domain::InstrumentBars>& instruments)
 {
     const storage::MarketDataCsvStore store{config.data_directory};
     auto history = store.load(cached_symbols());
-    sort_and_deduplicate(history);
+    market_data::sort_and_deduplicate_bars(history);
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     const auto target_start = std::chrono::duration_cast<std::chrono::seconds>(
         now - std::chrono::hours{calendar_days * 24}
