@@ -50,6 +50,8 @@ void entry_zone_is_centered_on_vwap_and_scaled_by_atr()
     require(zone.has_value(), "expected an entry zone");
     require(zone->symbol == "SOXL", "entry zone should retain its instrument symbol");
     require_near(zone->atr14, 2.0, "expected ATR14 from two-point ranges");
+    require_near(zone->atr5, 2.0, "expected fast ATR from two-point ranges");
+    require_near(zone->atr_expansion_ratio, 1.0, "constant ranges should have ATRx 1");
     require_near(zone->lower_price, 99.5, "unexpected lower entry price");
     require_near(zone->upper_price, 100.5, "unexpected upper entry price");
     require(

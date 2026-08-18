@@ -1,5 +1,7 @@
 #pragma once
 
+#include "daytrader/domain/TradeDecision.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -59,6 +61,9 @@ struct EntryZone {
     double current_price{};
     double session_vwap{};
     double atr14{};
+    double atr5{};
+    double atr_percent{};
+    double atr_expansion_ratio{};
     EntryZoneState state{EntryZoneState::trend_unconfirmed};
 };
 
@@ -99,6 +104,7 @@ struct RankedEtf {
     RelativeStrengthSignal signal{RelativeStrengthSignal::neutral};
     std::optional<EntryZone> entry_zone;
     std::optional<EntryZone> leveraged_entry_zone;
+    LongOpportunity long_opportunity;
 };
 
 // A directional suggestion emitted by the selector, never an executable order.

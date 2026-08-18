@@ -75,6 +75,10 @@ AppConfig AppConfig::from_environment()
         };
     }
     config.time_zone = environment_string("DAYTRADER_TIME_ZONE", config.time_zone);
+    config.data_directory = environment_string(
+        "DAYTRADER_DATA_DIR",
+        config.data_directory.string()
+    );
 
     if (config.ibkr.port < 1 || config.ibkr.port > 65535) {
         throw std::invalid_argument("DAYTRADER_IBKR_PORT must be between 1 and 65535");
@@ -90,6 +94,9 @@ AppConfig AppConfig::from_environment()
     }
     if (config.monitoring.reconnect_delay <= std::chrono::seconds::zero()) {
         throw std::invalid_argument("DAYTRADER_RECONNECT_DELAY_SECONDS must be positive");
+    }
+    if (config.data_directory.empty()) {
+        throw std::invalid_argument("DAYTRADER_DATA_DIR cannot be empty");
     }
     for (const auto& etf : config.etfs) {
         const auto& request = etf.market_data;

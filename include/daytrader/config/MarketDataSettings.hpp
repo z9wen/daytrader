@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <chrono>
 #include <string>
 
@@ -27,6 +28,8 @@ struct HistoricalDataSettings {
     std::chrono::minutes end_delay{0};
     // Optional requests, such as VIX, may fail without stopping the ETF monitor.
     bool required{true};
+    // Monitoring needs only recent context; research requests may opt into a larger history.
+    std::size_t maximum_bars{2'048};
 };
 
 } // namespace daytrader::config

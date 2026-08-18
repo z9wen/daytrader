@@ -3,6 +3,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -102,12 +103,65 @@ void renders_independent_tabs_and_column_order()
     );
 }
 
+void renders_responsive_industry_pages_without_overflow()
+{
+    using daytrader::presentation::DashboardTab;
+    using daytrader::presentation::DashboardViewport;
+    const daytrader::presentation::ConsoleScanPrinter printer{"America/New_York"};
+    auto scan = sample_scan();
+    scan.rankings.clear();
+    for (int index = 0; index < 20; ++index) {
+        scan.rankings.push_back(rank(
+            "I" + std::to_string(index),
+            "Industry " + std::to_string(index),
+            "L" + std::to_string(index)
+        ));
+    }
+
+    const auto first = printer.render_page(
+        scan,
+        DashboardTab::industries,
+        DashboardViewport{.columns = 60, .rows = 12, .requested_page = 0}
+    );
+    require(first.page_count > 1, "industry rows should paginate to terminal height");
+    require(first.page_index == 0, "the first responsive page should remain selected");
+
+    std::size_t line_count{};
+    std::size_t line_start{};
+    while (line_start < first.text.size()) {
+        const auto line_end = first.text.find('\n', line_start);
+        const auto length = (line_end == std::string::npos ? first.text.size() : line_end)
+            - line_start;
+        require(length <= 60, "responsive rows must not exceed terminal width");
+        ++line_count;
+        if (line_end == std::string::npos) {
+            break;
+        }
+        line_start = line_end + 1;
+    }
+    require(line_count <= 12, "responsive page must fit the terminal height");
+
+    const auto last = printer.render_page(
+        scan,
+        DashboardTab::industries,
+        DashboardViewport{
+            .columns = 60,
+            .rows = 12,
+            .requested_page = first.page_count - 1,
+        }
+    );
+    require(last.page_index == first.page_count - 1,
+            "the final responsive page should be reachable");
+    require(last.text != first.text, "different pages should show different rows");
+}
+
 } // namespace
 
 int main()
 {
     try {
         renders_independent_tabs_and_column_order();
+        renders_responsive_industry_pages_without_overflow();
         std::cout << "ConsoleScanPrinterTests passed\n";
         return 0;
     } catch (const std::exception& exception) {

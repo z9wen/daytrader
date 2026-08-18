@@ -32,6 +32,10 @@ std::optional<domain::EntryZone> EntryZoneCalculator::calculate(
     if (atr <= 0.0) {
         return std::nullopt;
     }
+    const double fast_atr = indicators::average_true_range(
+        completed_bars,
+        fast_atr_period
+    );
 
     const double half_width = atr * entry_zone_atr_half_width;
     const double lower = *snapshot.session_vwap - half_width;
@@ -54,6 +58,9 @@ std::optional<domain::EntryZone> EntryZoneCalculator::calculate(
         .current_price = snapshot.close,
         .session_vwap = *snapshot.session_vwap,
         .atr14 = atr,
+        .atr5 = fast_atr,
+        .atr_percent = snapshot.close > 0.0 ? atr / snapshot.close * 100.0 : 0.0,
+        .atr_expansion_ratio = fast_atr / atr,
         .state = state,
     };
 }
