@@ -46,6 +46,12 @@ public:
         std::string_view market_date
     ) const;
 
+    // Atomically merges one completed parallel batch into the manifest with a
+    // single read/write cycle.
+    void mark_sessions_complete(
+        const CompletedMarketSessions& sessions
+    ) const;
+
     [[nodiscard]] const std::filesystem::path& directory() const noexcept;
 
 private:

@@ -323,7 +323,11 @@ private:
             if (request.symbol.empty()) {
                 throw std::invalid_argument("historical-data symbols cannot be empty");
             }
-            if (!symbols.insert(request.symbol).second) {
+            // Continuous monitoring needs one result vector per symbol.
+            // One-shot backfills may intentionally request many different
+            // dates for the same contract in parallel; request IDs keep those
+            // result slots independent.
+            if (!symbols.insert(request.symbol).second && keep_up_to_date) {
                 throw std::invalid_argument("duplicate historical-data symbol: " + request.symbol);
             }
         }

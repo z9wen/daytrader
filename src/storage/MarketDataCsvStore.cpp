@@ -293,12 +293,36 @@ void MarketDataCsvStore::mark_session_complete(
     if (!valid_market_date(market_date)) {
         throw std::invalid_argument("invalid completed-session market date");
     }
+    CompletedMarketSessions one;
+    one[owned_symbol].insert(std::string{market_date});
+    mark_sessions_complete(one);
+}
+
+void MarketDataCsvStore::mark_sessions_complete(
+    const CompletedMarketSessions& sessions
+) const
+{
+    for (const auto& [symbol, dates] : sessions) {
+        static_cast<void>(path_for(symbol));
+        for (const auto& date : dates) {
+            if (!valid_market_date(date)) {
+                throw std::invalid_argument(
+                    "invalid completed-session market date"
+                );
+            }
+        }
+    }
     auto completed = load_completed_sessions();
-    const auto found = completed.find(owned_symbol);
-    if (found != completed.end() && found->second.contains(std::string{market_date})) {
+    bool changed{};
+    for (const auto& [symbol, dates] : sessions) {
+        auto& destination = completed[symbol];
+        for (const auto& date : dates) {
+            changed = destination.insert(date).second || changed;
+        }
+    }
+    if (!changed) {
         return;
     }
-    completed[owned_symbol].insert(std::string{market_date});
 
     std::filesystem::create_directories(directory_);
     const auto path = completed_sessions_path();

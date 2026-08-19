@@ -30,11 +30,12 @@ namespace daytrader::backtest {
 namespace {
 
 constexpr int recent_refresh_days = 5;
-// Multi-day one-minute requests can remain silent in TWS for several minutes.
-// Submit exactly one symbol and one complete calendar day per connection. TWS
-// can then finish each request independently, and every successful day becomes
-// durable before the next request starts.
+// Each request remains one symbol-day so every response is independently
+// cacheable. The official API permits up to 50 open historical requests; send
+// them asynchronously on one connection and shrink only after an actual IBKR
+// pacing/rate response.
 constexpr int one_minute_request_days = 1;
+constexpr std::size_t maximum_parallel_historical_requests = 50;
 constexpr auto cache_refresh_age = std::chrono::hours{6};
 
 [[nodiscard]] const std::vector<std::string>& cached_symbols()
@@ -205,7 +206,8 @@ complete_extended_sessions(
 
 [[nodiscard]] std::vector<domain::InstrumentBars> fetch_with_reactive_retry(
     const config::AppConfig& config,
-    const std::vector<config::HistoricalDataSettings>& requests
+    const std::vector<config::HistoricalDataSettings>& requests,
+    bool retry_pacing = true
 )
 {
     while (true) {
@@ -219,6 +221,9 @@ complete_extended_sessions(
                 exception.what()
             );
             if (!pacing && !disconnected) {
+                throw;
+            }
+            if (pacing && !retry_pacing) {
                 throw;
             }
             std::cerr << (pacing
@@ -305,37 +310,99 @@ complete_extended_sessions(
               << windows.size() * request_symbols.size() - pending.size()
               << " symbol-days; requesting " << pending.size() << " missing days\n";
 
-    std::size_t request_number{};
-    for (const auto& item : pending) {
-        ++request_number;
-        std::clog << "Fetching IBKR 1-minute day " << request_number << '/'
-                  << pending.size() << " | " << item.symbol << " | "
-                  << market_day_string(item.market_day) << '\n';
-        const std::vector requests{request_for(
-            config,
-            item.symbol,
-            item.window.duration_days,
-            item.window.end_delay_days,
-            daily_request_end(item.market_day)
-        )};
-        auto fetched = fetch_with_reactive_retry(config, requests);
-        const auto received = fetched.empty() ? 0U : fetched.front().bars.size();
-        market_data::merge_instrument_bars(history, std::move(fetched));
-        const auto changed = std::ranges::find(
-            history,
-            item.symbol,
-            &domain::InstrumentBars::symbol
+    std::size_t completed_requests{};
+    std::size_t parallel_requests = maximum_parallel_historical_requests;
+    while (completed_requests < pending.size()) {
+        const auto batch_size = std::min(
+            parallel_requests,
+            pending.size() - completed_requests
         );
-        if (changed == history.end()) {
+        const auto batch_begin = pending.begin()
+            + static_cast<std::ptrdiff_t>(completed_requests);
+        const auto batch_end = batch_begin
+            + static_cast<std::ptrdiff_t>(batch_size);
+        std::vector<config::HistoricalDataSettings> requests;
+        requests.reserve(batch_size);
+        for (auto item = batch_begin; item != batch_end; ++item) {
+            requests.push_back(request_for(
+                config,
+                item->symbol,
+                item->window.duration_days,
+                item->window.end_delay_days,
+                daily_request_end(item->market_day)
+            ));
+        }
+
+        std::clog << "Fetching IBKR parallel 1-minute batch "
+                  << completed_requests + 1 << '-'
+                  << completed_requests + batch_size << '/' << pending.size()
+                  << " | open requests " << batch_size << '\n';
+        std::vector<domain::InstrumentBars> fetched;
+        try {
+            fetched = fetch_with_reactive_retry(config, requests, false);
+        } catch (const std::exception& exception) {
+            if (!ibkr::is_pacing_or_rate_limit_error(exception.what())) {
+                throw;
+            }
+            if (parallel_requests > 1) {
+                parallel_requests = std::max<std::size_t>(1, parallel_requests / 2);
+                std::clog << "IBKR pacing response reduced the next retry batch to "
+                          << parallel_requests << " open requests\n";
+            } else {
+                std::clog << "IBKR pacing response at one open request; retrying "
+                             "after reconnect delay\n";
+                std::this_thread::sleep_for(config.monitoring.reconnect_delay);
+            }
+            continue;
+        }
+        if (fetched.size() != batch_size) {
             throw std::runtime_error(
-                "IBKR daily result did not include requested symbol " + item.symbol
+                "IBKR parallel historical batch returned an unexpected result count"
             );
         }
-        market_data::sort_and_deduplicate_bars(*changed);
-        store.save(std::span<const domain::InstrumentBars>{&*changed, 1});
-        store.mark_session_complete(item.symbol, market_day_string(item.market_day));
-        std::clog << "Cached " << received << " returned bars for "
-                  << item.symbol << " in " << store.directory().string() << '\n';
+
+        std::unordered_set<std::string> changed_symbols;
+        storage::CompletedMarketSessions completed_batch;
+        std::vector<std::size_t> received_counts;
+        received_counts.reserve(batch_size);
+        for (std::size_t index = 0; index < batch_size; ++index) {
+            const auto& item = batch_begin[static_cast<std::ptrdiff_t>(index)];
+            if (fetched[index].symbol != item.symbol) {
+                throw std::runtime_error(
+                    "IBKR parallel historical result order did not match its request"
+                );
+            }
+            received_counts.push_back(fetched[index].bars.size());
+            changed_symbols.insert(item.symbol);
+            completed_batch[item.symbol].insert(
+                market_day_string(item.market_day)
+            );
+        }
+        market_data::merge_instrument_bars(history, std::move(fetched));
+
+        for (const auto& symbol : changed_symbols) {
+            const auto changed = std::ranges::find(
+                history,
+                symbol,
+                &domain::InstrumentBars::symbol
+            );
+            if (changed == history.end()) {
+                throw std::runtime_error(
+                    "IBKR daily result did not include requested symbol " + symbol
+                );
+            }
+            market_data::sort_and_deduplicate_bars(*changed);
+            store.save(std::span<const domain::InstrumentBars>{&*changed, 1});
+        }
+        store.mark_sessions_complete(completed_batch);
+
+        for (std::size_t index = 0; index < batch_size; ++index) {
+            const auto& item = batch_begin[static_cast<std::ptrdiff_t>(index)];
+            std::clog << "Cached " << received_counts[index]
+                      << " returned bars for " << item.symbol << " | "
+                      << market_day_string(item.market_day) << '\n';
+        }
+        completed_requests += batch_size;
     }
     return history;
 }

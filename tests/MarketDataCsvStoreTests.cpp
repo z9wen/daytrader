@@ -68,10 +68,16 @@ void csv_round_trip_preserves_optional_ibkr_fields()
     store.mark_session_complete("SOXX", "2026-08-18");
     store.mark_session_complete("SOXX", "2026-08-18");
     store.mark_session_complete("QQQ", "2026-08-18");
+    store.mark_sessions_complete(daytrader::storage::CompletedMarketSessions{
+        {"SOXX", {"2026-08-17", "2026-08-18"}},
+        {"QQQ", {"2026-08-17"}},
+    });
     const auto completed = store.load_completed_sessions();
-    require(completed.at("SOXX").size() == 1, "completion rows should be idempotent");
+    require(completed.at("SOXX").size() == 2, "completion rows should be idempotent");
     require(completed.at("SOXX").contains("2026-08-18"), "SOXX day should be complete");
     require(completed.at("QQQ").contains("2026-08-18"), "QQQ day should be complete");
+    require(completed.at("SOXX").contains("2026-08-17"), "batch SOXX day should persist");
+    require(completed.at("QQQ").contains("2026-08-17"), "batch QQQ day should persist");
 
     std::filesystem::remove_all(directory);
 }
