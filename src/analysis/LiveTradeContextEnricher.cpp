@@ -41,6 +41,35 @@ struct AtrContext {
     return found == context.positions.end() ? nullptr : &*found;
 }
 
+[[nodiscard]] std::optional<double> live_price_for(
+    const domain::LiveTradeContext& context,
+    const std::string& symbol
+)
+{
+    const auto found = std::ranges::find(
+        context.quotes,
+        symbol,
+        &domain::LiveQuoteSnapshot::symbol
+    );
+    return found == context.quotes.end() ? std::nullopt : found->selected_price;
+}
+
+void apply_live_price(
+    std::optional<domain::EntryZone>& zone,
+    const std::optional<double>& price
+)
+{
+    if (!zone.has_value() || !price.has_value()) {
+        return;
+    }
+    zone->current_price = *price;
+    zone->state = *price > zone->upper_price
+        ? domain::EntryZoneState::extended
+        : (*price < zone->lower_price
+            ? domain::EntryZoneState::below_zone
+            : domain::EntryZoneState::in_zone);
+}
+
 [[nodiscard]] std::optional<AtrContext> atr_for(
     const domain::MarketScan& scan,
     const std::string& symbol
@@ -78,6 +107,12 @@ domain::MarketScan LiveTradeContextEnricher::enrich(
 ) const
 {
     const OrderFlowSignalAnalyzer analyzer;
+    scan.spy.live_price = live_price_for(context, scan.spy.symbol);
+    scan.qqq.live_price = live_price_for(context, scan.qqq.symbol);
+    if (scan.tqqq.has_value()) {
+        scan.tqqq->live_price = live_price_for(context, scan.tqqq->symbol);
+        apply_live_price(scan.tqqq_entry_zone, scan.tqqq->live_price);
+    }
     for (auto& flow : context.order_flow) {
         const auto atr = atr_for(scan, flow.symbol);
         if (!atr.has_value()) {
@@ -94,9 +129,15 @@ domain::MarketScan LiveTradeContextEnricher::enrich(
     const LeveragedExecutionAnalyzer execution_analyzer;
     const auto update_rankings = [&](std::vector<domain::RankedEtf>& rankings) {
         for (auto& rank : rankings) {
+            rank.live_price = live_price_for(context, rank.symbol);
+            apply_live_price(rank.entry_zone, rank.live_price);
             if (rank.leveraged_long_symbol.empty()) {
                 continue;
             }
+            apply_live_price(
+                rank.leveraged_entry_zone,
+                live_price_for(context, rank.leveraged_long_symbol)
+            );
             const auto* flow = flow_for(context, rank.symbol);
             rank.leveraged_execution = execution_analyzer.analyze(
                 rank.long_opportunity,

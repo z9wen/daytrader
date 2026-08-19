@@ -4,6 +4,7 @@
 #include "daytrader/analysis/OrderFlowSignalAnalyzer.hpp"
 #include "daytrader/analysis/TradeClassifier.hpp"
 #include "daytrader/backtest/IbkrBacktestRunner.hpp"
+#include "daytrader/ibkr/IbkrErrorClassifier.hpp"
 #include "daytrader/ibkr/TwsHistoricalTickClient.hpp"
 #include "daytrader/storage/OrderFlowTickCsvStore.hpp"
 
@@ -15,11 +16,10 @@
 #include <ranges>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace daytrader::backtest {
 namespace {
-
-constexpr double minimum_classification_coverage = 80.0;
 
 [[nodiscard]] const config::HistoricalDataSettings& signal_contract(
     const config::AppConfig& config
@@ -34,14 +34,6 @@ constexpr double minimum_classification_coverage = 80.0;
         throw std::runtime_error("ETF universe is missing SOXX");
     }
     return found->market_data;
-}
-
-[[nodiscard]] bool positive_and_covered(const domain::OrderFlowWindow& window)
-{
-    return window.complete && window.flow.delta_ratio_percent.has_value()
-        && *window.flow.delta_ratio_percent > 0.0
-        && window.flow.classification_coverage_percent
-            >= minimum_classification_coverage;
 }
 
 [[nodiscard]] int sampled_seconds(
@@ -59,9 +51,10 @@ constexpr double minimum_classification_coverage = 80.0;
     return static_cast<int>(std::max<std::int64_t>(0, end_timestamp - earliest));
 }
 
-[[nodiscard]] bool covers_one_minute(
+[[nodiscard]] bool covers_lookback(
     const domain::OrderFlowTicks& ticks,
-    std::int64_t end_timestamp
+    std::int64_t end_timestamp,
+    int lookback_seconds
 )
 {
     if (ticks.trades.empty() || ticks.quotes.empty()) {
@@ -77,8 +70,30 @@ constexpr double minimum_classification_coverage = 80.0;
         {},
         &domain::BidAskTick::epoch_seconds
     ).epoch_seconds;
-    const auto start = end_timestamp - 59;
+    const auto start = end_timestamp - lookback_seconds + 1;
     return earliest_trade <= start && earliest_quote <= start;
+}
+
+[[nodiscard]] domain::OrderFlowTicks fetch_ticks_with_reactive_retry(
+    const config::AppConfig& config,
+    const ibkr::HistoricalTickRequest& request
+)
+{
+    while (true) {
+        try {
+            auto connection = config.ibkr;
+            ibkr::TwsHistoricalTickClient client{std::move(connection)};
+            return client.fetch(request);
+        } catch (const std::exception& exception) {
+            if (!ibkr::is_pacing_or_rate_limit_error(exception.what())) {
+                throw;
+            }
+            std::cerr << "IBKR pacing response received; retrying the same tick "
+                         "lookback after reconnect: "
+                      << exception.what() << '\n';
+            std::this_thread::sleep_for(config.monitoring.reconnect_delay);
+        }
+    }
 }
 
 void summarize(OrderFlowBacktestReport& report)
@@ -164,7 +179,7 @@ OrderFlowBacktestReport OrderFlowBacktestRunner::run(
     OrderFlowBacktestReport report{.baseline = baselines.front()};
     report.candidates.reserve(report.baseline.trade_log.size());
     const storage::OrderFlowTickCsvStore store{
-        config.data_directory.parent_path() / "order_flow_ticks"
+        config.minute_data_directory.parent_path() / "order_flow_ticks"
     };
     const analysis::TradeClassifier classifier;
     const analysis::OrderFlowWindowAnalyzer analyzer;
@@ -174,13 +189,13 @@ OrderFlowBacktestReport OrderFlowBacktestRunner::run(
          candidate_index < report.baseline.trade_log.size();
          ++candidate_index) {
         const auto& trade = report.baseline.trade_log[candidate_index];
-        // Entry executes at the next 5-minute bar open. The final included tick
+        // Entry executes at the next one-minute bar open. The final included tick
         // is one second earlier, so the Order Flow gate cannot see after the fill.
         const std::int64_t evidence_end = trade.entry_timestamp - 1;
         OrderFlowCandidate candidate{.trade = trade};
         try {
             auto ticks = store.load("SOXX", evidence_end);
-            if (ticks.has_value() && covers_one_minute(*ticks, evidence_end)) {
+            if (ticks.has_value() && covers_lookback(*ticks, evidence_end, 300)) {
                 ++report.cache_hits;
                 std::clog << '[' << candidate_index + 1 << '/'
                           << report.baseline.trade_log.size()
@@ -192,21 +207,13 @@ OrderFlowBacktestReport OrderFlowBacktestRunner::run(
                           << (ticks.has_value() ? "Extending" : "Fetching")
                           << " SOXX Order Flow before " << trade.session_date
                           << " entry\n";
-                auto connection = config.ibkr;
-                connection.request_timeout = std::max(
-                    connection.request_timeout,
-                    std::chrono::seconds{45}
-                );
-                ibkr::TwsHistoricalTickClient client{std::move(connection)};
-                ticks = client.fetch(ibkr::HistoricalTickRequest{
+                ticks = fetch_ticks_with_reactive_retry(
+                    config,
+                    ibkr::HistoricalTickRequest{
                     .contract = signal_contract(config),
                     .end_timestamp = evidence_end,
                     .number_of_ticks = 1'000,
-                    .minimum_lookback_seconds = 60,
-                    // Very active quote streams can exceed 6,000 updates per
-                    // minute. Paging still stops as soon as both streams cover
-                    // the requested minute.
-                    .maximum_pages_per_stream = 12,
+                    .minimum_lookback_seconds = 300,
                 });
                 store.save(*ticks);
                 ++report.downloaded;
@@ -247,8 +254,10 @@ OrderFlowBacktestReport OrderFlowBacktestRunner::run(
                 && candidate.one_minute.flow.delta_ratio_percent.has_value();
             if (!enough_data) {
                 candidate.verdict = OrderFlowVerdict::insufficient_data;
-            } else if (positive_and_covered(candidate.thirty_seconds)
-                       && positive_and_covered(candidate.one_minute)) {
+            } else if (candidate.assessment.pressure
+                           == domain::OrderFlowPressureState::buying_effective
+                       || candidate.assessment.pressure
+                           == domain::OrderFlowPressureState::selling_absorbed) {
                 candidate.verdict = OrderFlowVerdict::confirmed;
             } else {
                 candidate.verdict = OrderFlowVerdict::rejected;

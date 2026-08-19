@@ -23,6 +23,42 @@ if(NOT EXISTS "${IBKR_TWS_API_ROOT}/source/cppclient/client/EClientSocket.h")
     )
 endif()
 
+# The C++ headers do not expose a package version. Current packages include an
+# authoritative API_VersionNum.txt; older Stable packages require falling back
+# to the Java POM. Surface the result during configure and at runtime.
+set(IBKR_TWS_API_VERSION "unknown")
+set(IBKR_VERSION_FILE "${IBKR_TWS_API_ROOT}/API_VersionNum.txt")
+if(EXISTS "${IBKR_VERSION_FILE}")
+    file(READ "${IBKR_VERSION_FILE}" IBKR_VERSION_FILE_CONTENT)
+    string(REGEX MATCH
+        "API_Version=([0-9]+\\.[0-9]+(\\.[0-9]+)?)"
+        IBKR_VERSION_MATCH
+        "${IBKR_VERSION_FILE_CONTENT}"
+    )
+    if(IBKR_VERSION_MATCH)
+        set(IBKR_TWS_API_VERSION "${CMAKE_MATCH_1}")
+    endif()
+else()
+    set(IBKR_JAVA_POM "${IBKR_TWS_API_ROOT}/source/JavaClient/pom.xml")
+endif()
+if(IBKR_TWS_API_VERSION STREQUAL "unknown" AND EXISTS "${IBKR_JAVA_POM}")
+    file(READ "${IBKR_JAVA_POM}" IBKR_JAVA_POM_CONTENT)
+    string(REGEX MATCH
+        "<version>[0-9]+\\.[0-9]+\\.[0-9]+</version>"
+        IBKR_VERSION_ELEMENT
+        "${IBKR_JAVA_POM_CONTENT}"
+    )
+    if(IBKR_VERSION_ELEMENT)
+        string(REGEX REPLACE
+            ".*<version>([0-9]+\\.[0-9]+\\.[0-9]+)</version>.*"
+            "\\1"
+            IBKR_TWS_API_VERSION
+            "${IBKR_VERSION_ELEMENT}"
+        )
+    endif()
+endif()
+message(STATUS "IBKR TWS API SDK version: ${IBKR_TWS_API_VERSION}")
+
 set(IBKR_CLIENT_DIR "${IBKR_TWS_API_ROOT}/source/cppclient/client")
 set(IBKR_PROTO_DIR "${IBKR_TWS_API_ROOT}/source/proto")
 set(
@@ -106,8 +142,9 @@ add_library(daytrader_core
     src/backtest/IbkrBacktestRunner.cpp
     src/backtest/OrderFlowBacktestRunner.cpp
     src/config/AppConfig.cpp
-    src/ibkr/HistoricalRequestPacer.cpp
     src/ibkr/TwsHistoricalTickClient.cpp
+    src/ibkr/HistoricalRequestPlanner.cpp
+    src/ibkr/IbkrErrorClassifier.cpp
     src/ibkr/TwsLiveContextClient.cpp
     src/ibkr/TwsMarketDataClient.cpp
     src/indicators/TechnicalIndicators.cpp
@@ -115,6 +152,7 @@ add_library(daytrader_core
     src/live/LiveTradeContextStore.cpp
     src/live/PositionTracker.cpp
     src/market_data/BarSeriesAligner.cpp
+    src/market_data/BarTimeframeTransformer.cpp
     src/market_data/CompletedBarSynchronizer.cpp
     src/market_data/InstrumentBarsLookup.cpp
     src/market_data/InstrumentBarsMerger.cpp
@@ -136,6 +174,14 @@ target_include_directories(daytrader_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 target_link_libraries(daytrader_core PRIVATE ibkr_tws_api)
+target_compile_definitions(daytrader_core PUBLIC
+    DAYTRADER_IBKR_API_VERSION="${IBKR_TWS_API_VERSION}"
+)
+if(IBKR_TWS_API_VERSION VERSION_GREATER_EQUAL "10.49.0")
+    target_compile_definitions(daytrader_core PRIVATE
+        DAYTRADER_IBKR_API_10_49_OR_NEWER=1
+    )
+endif()
 set_target_properties(daytrader_core PROPERTIES CXX_EXTENSIONS OFF)
 
 add_executable(daytrader src/main.cpp)

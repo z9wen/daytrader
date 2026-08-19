@@ -47,16 +47,20 @@ AppConfig AppConfig::from_environment()
         "DAYTRADER_LIVE_CLIENT_ID",
         config.ibkr.client_id + 1
     );
-    config.ibkr.request_timeout = std::chrono::seconds{
-        environment_integer(
-            "DAYTRADER_REQUEST_TIMEOUT_SECONDS",
-            static_cast<int>(config.ibkr.request_timeout.count())
-        )
-    };
+    config.monitoring.backfill_client_id = environment_integer(
+        "DAYTRADER_BACKFILL_CLIENT_ID",
+        config.ibkr.client_id + 2
+    );
     config.monitoring.bar_interval = std::chrono::seconds{
         environment_integer(
             "DAYTRADER_BAR_INTERVAL_SECONDS",
             static_cast<int>(config.monitoring.bar_interval.count())
+        )
+    };
+    config.monitoring.source_bar_interval = std::chrono::seconds{
+        environment_integer(
+            "DAYTRADER_SOURCE_BAR_INTERVAL_SECONDS",
+            static_cast<int>(config.monitoring.source_bar_interval.count())
         )
     };
     config.monitoring.reconnect_delay = std::chrono::seconds{
@@ -69,23 +73,10 @@ AppConfig AppConfig::from_environment()
         "DAYTRADER_MONITOR_DURATION",
         config.monitoring.history_duration
     );
-    config.monitoring.initial_data_timeout = std::chrono::seconds{
-        environment_integer(
-            "DAYTRADER_MONITOR_TIMEOUT_SECONDS",
-            static_cast<int>(config.monitoring.initial_data_timeout.count())
-        )
-    };
-    const int history_maximum_bars = environment_integer(
-        "DAYTRADER_MONITOR_MAX_BARS",
-        static_cast<int>(config.monitoring.history_maximum_bars)
+    config.monitoring.history_lookback_days = environment_integer(
+        "DAYTRADER_MONITOR_LOOKBACK_DAYS",
+        config.monitoring.history_lookback_days
     );
-    if (history_maximum_bars <= 0) {
-        throw std::invalid_argument("DAYTRADER_MONITOR_MAX_BARS must be positive");
-    }
-    config.monitoring.history_maximum_bars = static_cast<std::size_t>(
-        history_maximum_bars
-    );
-
     for (auto& etf : config.etfs) {
         auto& request = etf.market_data;
         request.data_type = environment_string("DAYTRADER_DATA_TYPE", request.data_type);
@@ -99,9 +90,9 @@ AppConfig AppConfig::from_environment()
         };
     }
     config.time_zone = environment_string("DAYTRADER_TIME_ZONE", config.time_zone);
-    config.data_directory = environment_string(
-        "DAYTRADER_DATA_DIR",
-        config.data_directory.string()
+    config.minute_data_directory = environment_string(
+        "DAYTRADER_MINUTE_DATA_DIR",
+        config.minute_data_directory.string()
     );
 
     if (config.ibkr.port < 1 || config.ibkr.port > 65535) {
@@ -110,11 +101,16 @@ AppConfig AppConfig::from_environment()
     if (config.ibkr.client_id < 0) {
         throw std::invalid_argument("DAYTRADER_IBKR_CLIENT_ID must be non-negative");
     }
-    if (config.ibkr.request_timeout <= std::chrono::seconds::zero()) {
-        throw std::invalid_argument("DAYTRADER_REQUEST_TIMEOUT_SECONDS must be positive");
-    }
     if (config.monitoring.bar_interval <= std::chrono::seconds::zero()) {
         throw std::invalid_argument("DAYTRADER_BAR_INTERVAL_SECONDS must be positive");
+    }
+    if (config.monitoring.source_bar_interval <= std::chrono::seconds::zero()
+        || config.monitoring.bar_interval <= config.monitoring.source_bar_interval
+        || config.monitoring.bar_interval.count()
+            % config.monitoring.source_bar_interval.count() != 0) {
+        throw std::invalid_argument(
+            "DAYTRADER_SOURCE_BAR_INTERVAL_SECONDS must divide the trend interval"
+        );
     }
     if (config.monitoring.reconnect_delay <= std::chrono::seconds::zero()) {
         throw std::invalid_argument("DAYTRADER_RECONNECT_DELAY_SECONDS must be positive");
@@ -122,11 +118,10 @@ AppConfig AppConfig::from_environment()
     if (config.monitoring.history_duration.empty()) {
         throw std::invalid_argument("DAYTRADER_MONITOR_DURATION cannot be empty");
     }
-    if (config.monitoring.initial_data_timeout <= std::chrono::seconds::zero()) {
-        throw std::invalid_argument("DAYTRADER_MONITOR_TIMEOUT_SECONDS must be positive");
-    }
-    if (config.monitoring.history_maximum_bars == 0) {
-        throw std::invalid_argument("DAYTRADER_MONITOR_MAX_BARS must be positive");
+    if (config.monitoring.history_lookback_days < 0) {
+        throw std::invalid_argument(
+            "DAYTRADER_MONITOR_LOOKBACK_DAYS must be zero (YTD) or positive"
+        );
     }
     if (config.monitoring.live_context_client_id < 0
         || config.monitoring.live_context_client_id == config.ibkr.client_id) {
@@ -134,8 +129,16 @@ AppConfig AppConfig::from_environment()
             "DAYTRADER_LIVE_CLIENT_ID must be non-negative and differ from the bar client"
         );
     }
-    if (config.data_directory.empty()) {
-        throw std::invalid_argument("DAYTRADER_DATA_DIR cannot be empty");
+    if (config.monitoring.backfill_client_id < 0
+        || config.monitoring.backfill_client_id == config.ibkr.client_id
+        || config.monitoring.backfill_client_id
+            == config.monitoring.live_context_client_id) {
+        throw std::invalid_argument(
+            "DAYTRADER_BACKFILL_CLIENT_ID must be non-negative and unique"
+        );
+    }
+    if (config.minute_data_directory.empty()) {
+        throw std::invalid_argument("DAYTRADER_MINUTE_DATA_DIR cannot be empty");
     }
     for (const auto& etf : config.etfs) {
         const auto& request = etf.market_data;

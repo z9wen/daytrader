@@ -42,16 +42,22 @@ struct SubsetStats {
 
 [[nodiscard]] std::size_t entry_period_index(int minute)
 {
-    if (minute < 9 * 60 + 45) {
+    if (minute < 9 * 60 + 30) {
         return 0;
     }
-    if (minute < 11 * 60 + 30) {
+    if (minute < 9 * 60 + 45) {
         return 1;
     }
-    if (minute < 14 * 60) {
+    if (minute < 11 * 60 + 30) {
         return 2;
     }
-    return 3;
+    if (minute < 14 * 60) {
+        return 3;
+    }
+    if (minute < 16 * 60) {
+        return 4;
+    }
+    return 5;
 }
 
 void print_subset(
@@ -84,10 +90,10 @@ std::string BacktestReportPrinter::render(
     output << "\nETF -> LEVERAGED ETF INTRADAY BACKTEST\n"
            << "Direction comes from QQQ/SOXX; execution timing comes from "
               "TQQQ/SOXL's own VWAP/ATR zone.\n"
-           << "No hard SPY/QQQ market gate; completed 5-minute signals fill at "
-              "the next bar open.\n"
-           << "RTH signals 09:30-15:30 ET; one primary trade plus at most one "
-              "optional BUILDING -> STRONG re-entry; 2 bps cost per side.\n"
+           << "No hard SPY/QQQ market gate; five-minute trend context is executed "
+              "from completed one-minute bars at the next bar open.\n"
+           << "All cached IBKR sessions are eligible, including premarket and "
+              "after-hours; no daily trade-count cap; 2 bps cost per side.\n"
            << "Order Flow is NOT replayed because full-session historical ticks "
               "are not cached.\n\n";
     output << std::left << std::setw(21) << "strategy"
@@ -130,14 +136,14 @@ std::string BacktestReportPrinter::render(
     const time::TimeZoneFormatter formatter{time_zone_};
     for (const auto& report : reports) {
         std::array<SubsetStats, 3> markets{};
-        std::array<SubsetStats, 4> periods{};
+        std::array<SubsetStats, 6> periods{};
         std::array<SubsetStats, 2> trade_order{};
         for (const auto& trade : report.trade_log) {
             auto& market = markets[market_index(trade.market_regime_at_entry)];
             auto& period = periods[entry_period_index(
                 formatter.minutes_since_midnight(trade.entry_timestamp)
             )];
-            auto& order = trade_order[trade.trade_number_in_session == 2 ? 1 : 0];
+            auto& order = trade_order[trade.trade_number_in_session == 1 ? 0 : 1];
             ++market.trades;
             ++period.trades;
             ++order.trades;
@@ -158,18 +164,22 @@ std::string BacktestReportPrinter::render(
         print_subset(output, "BEARISH", markets[2]);
         output << '\n';
         output << "  " << report.strategy_name << " entry time: ";
-        print_subset(output, "OPEN", periods[0]);
+        print_subset(output, "PREMARKET", periods[0]);
         output << " | ";
-        print_subset(output, "MORNING", periods[1]);
+        print_subset(output, "OPEN", periods[1]);
         output << " | ";
-        print_subset(output, "MIDDAY", periods[2]);
+        print_subset(output, "MORNING", periods[2]);
         output << " | ";
-        print_subset(output, "AFTERNOON", periods[3]);
+        print_subset(output, "MIDDAY", periods[3]);
+        output << " | ";
+        print_subset(output, "AFTERNOON", periods[4]);
+        output << " | ";
+        print_subset(output, "AFTER_HOURS", periods[5]);
         output << '\n';
         output << "  " << report.strategy_name << " trade order: ";
         print_subset(output, "PRIMARY", trade_order[0]);
         output << " | ";
-        print_subset(output, "OPTIONAL_SECOND", trade_order[1]);
+        print_subset(output, "REENTRIES", trade_order[1]);
         output << '\n';
     }
 

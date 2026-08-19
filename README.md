@@ -41,7 +41,8 @@ process-observed peak MFE, profit giveback, and live holding guidance, plus roll
 30/60-second DeltaRatio for QQQ and SOXX, ATR-normalized pressure state, and
 evidence quality. A new `TQQQ` or `SOXL` entry reaches `READY` only when the
 leveraged ETF is in its own entry zone and QQQ/SOXX Order Flow is
-`BUY_EFFECTIVE` with at least 50% evidence quality. Once peak unrealized profit
+`BUY_EFFECTIVE` or shows `SELLING_ABSORBED`. Evidence quality remains a visible
+continuous diagnostic and is not used as an arbitrary pass/fail cutoff. Once peak unrealized profit
 reaches 0.25% of cost basis, 20%/35%/50% giveback tightens guidance to
 `PROTECT`/`TRIM`/`EXIT`. Press `Tab`, Left/Right, or `1`/`2`/`3`/`4`/`5` to switch
 pages. Interactive
@@ -55,7 +56,9 @@ terminal triggers a responsive redraw without requesting new market data.
 ## Prerequisites
 
 - A running TWS or IB Gateway with socket clients enabled.
-- The official Mac/Unix TWS API extracted to `$HOME/IBJts`.
+- The official Mac/Unix TWS API extracted to `$HOME/IBJts`. The current build
+  is validated with Latest `10.49.02`; CMake detects and prints the installed
+  SDK version instead of assuming one.
 - `protobuf@21`, installed with `brew install protobuf@21`.
 - Intel Decimal Floating-Point `libbid.a` at
   `$HOME/IBJts/source/cppclient/client/lib/libbid.a`.
@@ -74,16 +77,22 @@ ctest --test-dir build --output-on-failure
 ```
 
 The first build regenerates and compiles the protocol-buffer sources supplied
-by IBKR, so it takes longer than subsequent builds.
+by IBKR, so it takes longer than subsequent builds. IBKR distributes API
+`10.49` and newer under GPLv3, which matters if the resulting application is
+distributed rather than kept as a local tool.
 
 ## Continuous monitor
 
-The defaults connect to TWS at `127.0.0.1:9972` with client ID `7`, use regular
-trading hours and five-minute `TRADES` bars, and display times in
-`America/New_York`. A second read-only connection uses client ID `8` for
-positions/P&L and four tick-by-tick streams (QQQ/SOXX Last + BidAsk). The
-monitor requests only the latest two days for a fast startup, merges them with
-the CSV cache, and then consumes incremental updates. Time-of-day RVOL uses the
+The defaults connect to TWS at `127.0.0.1:9972` with client ID `7`, preserve
+complete one-minute `TRADES` bars including premarket and after-hours, derive a
+five-minute trend layer, and display times in `America/New_York`. A second
+connection uses client ID `8` for positions/P&L, streaming Level-1 prices for
+the complete monitored universe, and QQQ/SOXX Last + BidAsk tick-by-tick flow.
+The Trade page reports the feed type received through IBKR's
+`marketDataType` callback (`LIVE`, `FROZEN`, `DELAYED`, or `DELAYED_FROZEN`),
+so the UI does not infer real-time status from configuration.
+The monitor merges live updates into the CSV cache and backfills missing
+one-minute history before scanning. Time-of-day RVOL uses the
 median of up to 20 cached prior sessions no older than 45 calendar days; it
 remains unavailable until at least three comparable sessions have accumulated.
 
@@ -91,8 +100,9 @@ remains unavailable until at least three comparable sessions have accumulated.
 ./build/daytrader
 ```
 
-The bar analysis refreshes after each synchronized completed bar; live P&L and
-Order Flow redraw at roughly one-second cadence. Inverse ETFs are
+Execution analysis refreshes after each synchronized completed one-minute bar;
+streaming price, live P&L, and Order Flow redraw at roughly one-second cadence.
+Inverse ETFs are
 shown only as bearish references; they are not subscribed or proposed as live
 short trades.
 
@@ -105,8 +115,8 @@ Run the current QQQ-to-TQQQ and SOXX-to-SOXL intraday rules over approximately
 ./build/daytrader backtest 240
 ```
 
-Historical RTH five-minute bars are stored as one CSV per symbol under
-`data/ibkr/rth_5m/`:
+Complete one-minute bars are stored as one CSV per symbol under
+`data/ibkr/all_1m/`:
 
 - `SPY.csv`
 - `QQQ.csv`
@@ -117,24 +127,28 @@ Historical RTH five-minute bars are stored as one CSV per symbol under
 The cache is ignored by Git. A complete recent cache avoids TWS requests;
 otherwise the program refreshes only recent bars or downloads history only for
 missing symbols. Every successful IBKR batch is persisted immediately.
+For one-minute bars, a range of up to 365 calendar days is requested in one
+window per symbol; only longer ranges are divided at IBKR's documented 365-day
+boundary. Requests are submitted without a client-side pacing delay. If TWS
+actually returns a pacing/rate-limit response, the failed request is retried
+without shortening or silently discarding its requested range.
 
 The unleveraged ETF determines direction while the leveraged ETF must reach its
 own VWAP/ATR entry zone. The backtest does not require SPY and QQQ to be bullish,
-uses completed five-minute signals, fills at the next bar open, scans the
-09:30-15:30 ET RTH entry window, and allows another trade only after the prior
-wave resets through BUILDING and returns to STRONG. The first trade is primary;
-the re-entry is an optional second trade, and no third trade is modeled. The
-report separates first- and second-trade performance so the discretionary
-second opportunity does not hide the quality of the normal first trade.
+combines five-minute trend context with one-minute execution, fills at the next
+one-minute bar open, and evaluates every timestamp present in the complete IBKR
+cache, including premarket and after-hours. There is no built-in daily
+trade-count cap; a new entry is armed only after the previous continuous READY
+wave genuinely resets. The report separates the first trade from later
+re-entries instead of silently limiting their count.
 
-Premarket is not included because the current cache contains RTH bars only.
-Live DeltaRatio/Order Flow is also not replayed unless full-session historical
+Live DeltaRatio/Order Flow is not replayed in the baseline unless historical
 ticks are available, so the report labels that limitation rather than treating
 missing flow as confirmation. Transaction costs are estimated; results are
 exploratory and do not promise future performance.
 
 For the first Order Flow experiment, run a 30-calendar-day baseline and fetch
-bounded SOXX time-and-sales only around its candidate entries:
+SOXX time-and-sales around its candidate entries:
 
 ```sh
 ./build/daytrader orderflow-backtest 30
@@ -148,18 +162,20 @@ interrupted or pacing-limited run resumes from the existing cache:
 ./build/daytrader orderflow-backtest ytd
 ```
 
-The classifier combines historical `TRADES` and `BID_ASK`, reports 30-second,
+The classifier combines historical `TRADES` and `BID_ASK`, paging backward
+until the complete requested five-minute evidence range is covered. It reports 30-second,
 one-minute, and five-minute DeltaRatio, and distinguishes effective pressure
 from absorption using the price response in SOXX ATR14 units. `ATRx` is the
 completed-bar ATR5/ATR14 ratio, while the signed flow score combines 30-second
 and one-minute Delta, Delta acceleration, and ATR response. The score is a
 diagnostic, not a probability. In live monitoring, the QQQ/SOXX pressure state
-and evidence quality gate TQQQ/SOXL entries; historical Order Flow reports
-remain exploratory. Evidence quality uses classification coverage, direct
+affects TQQQ/SOXL entries while evidence quality is displayed rather than used
+as a binary gate; historical Order Flow reports remain exploratory. Evidence
+quality uses classification coverage, direct
 quote-test coverage, window
 completeness, and trade depth. Raw event samples are cached under
 `data/ibkr/order_flow_ticks/`, so changes to the classifier can be replayed
-without another IBKR request. An asterisk marks a horizon that the bounded
+without another IBKR request. An asterisk marks a horizon that the returned
 sample did not fully cover.
 
 ## Runtime configuration
@@ -170,23 +186,23 @@ Supported environment variables:
 - `DAYTRADER_IBKR_PORT`
 - `DAYTRADER_IBKR_CLIENT_ID`
 - `DAYTRADER_LIVE_CLIENT_ID`
-- `DAYTRADER_REQUEST_TIMEOUT_SECONDS`
+- `DAYTRADER_BACKFILL_CLIENT_ID`
 - `DAYTRADER_BAR_INTERVAL_SECONDS`
+- `DAYTRADER_SOURCE_BAR_INTERVAL_SECONDS`
 - `DAYTRADER_RECONNECT_DELAY_SECONDS`
 - `DAYTRADER_MONITOR_DURATION`
-- `DAYTRADER_MONITOR_MAX_BARS`
-- `DAYTRADER_MONITOR_TIMEOUT_SECONDS`
+- `DAYTRADER_MONITOR_LOOKBACK_DAYS`
 - `DAYTRADER_DATA_TYPE`
 - `DAYTRADER_DURATION`
 - `DAYTRADER_BAR_SIZE`
 - `DAYTRADER_HISTORICAL_DELAY_MINUTES`
 - `DAYTRADER_TIME_ZONE`
-- `DAYTRADER_DATA_DIR`
+- `DAYTRADER_MINUTE_DATA_DIR`
 
 Example with a separate cache location:
 
 ```sh
-DAYTRADER_DATA_DIR=/path/to/daytrader-data ./build/daytrader backtest 240
+DAYTRADER_MINUTE_DATA_DIR=/path/to/daytrader-data ./build/daytrader backtest 240
 ```
 
 Strict compiler warnings are enabled by default and can be disabled with

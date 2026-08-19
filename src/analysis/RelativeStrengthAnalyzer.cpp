@@ -1,6 +1,8 @@
 #include "daytrader/analysis/RelativeStrengthAnalyzer.hpp"
 
-#include <cstddef>
+#include <algorithm>
+#include <chrono>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 
@@ -9,14 +11,24 @@ namespace {
 
 [[nodiscard]] std::optional<double> horizon_change(
     std::span<const market_data::AlignedBarPair> pairs,
-    std::size_t lookback
+    std::chrono::minutes horizon
 )
 {
-    if (pairs.size() <= lookback) {
+    if (pairs.size() < 2) {
         return std::nullopt;
     }
     const auto& current = pairs.back();
-    const auto& prior = pairs[pairs.size() - 1 - lookback];
+    const auto target = current.epoch_seconds - horizon.count() * 60;
+    const auto after_target = std::ranges::upper_bound(
+        pairs,
+        target,
+        {},
+        &market_data::AlignedBarPair::epoch_seconds
+    );
+    if (after_target == pairs.begin()) {
+        return std::nullopt;
+    }
+    const auto& prior = *std::prev(after_target);
     if (current.benchmark->close <= 0.0 || prior.benchmark->close <= 0.0
         || prior.signal->close <= 0.0) {
         throw std::runtime_error("relative strength requires positive close prices");
@@ -33,9 +45,18 @@ domain::RelativeStrengthHorizons RelativeStrengthAnalyzer::analyze(
 ) const
 {
     return domain::RelativeStrengthHorizons{
-        .fifteen_minute_percent = horizon_change(signal_vs_benchmark, 3),
-        .thirty_minute_percent = horizon_change(signal_vs_benchmark, 6),
-        .sixty_minute_percent = horizon_change(signal_vs_benchmark, 12),
+        .fifteen_minute_percent = horizon_change(
+            signal_vs_benchmark,
+            std::chrono::minutes{15}
+        ),
+        .thirty_minute_percent = horizon_change(
+            signal_vs_benchmark,
+            std::chrono::minutes{30}
+        ),
+        .sixty_minute_percent = horizon_change(
+            signal_vs_benchmark,
+            std::chrono::minutes{60}
+        ),
     };
 }
 

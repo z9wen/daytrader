@@ -4,6 +4,7 @@
 #include "daytrader/time/TimeZoneFormatter.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <iomanip>
@@ -181,6 +182,16 @@ struct ResponsiveRank {
         break;
     }
     return std::string{entry} + '/' + std::string{held};
+}
+
+[[nodiscard]] double displayed_price(const domain::RankedEtf& rank)
+{
+    return rank.live_price.value_or(rank.close);
+}
+
+[[nodiscard]] double displayed_price(const domain::EtfSnapshot& snapshot)
+{
+    return snapshot.live_price.value_or(snapshot.close);
 }
 
 [[nodiscard]] std::string compact_action_text(
@@ -458,7 +469,7 @@ void print_responsive_rotation_rank(
         if (layout == RotationLayout::regular) {
             output << std::left << std::setw(6) << fit_text(rank.symbol, 6)
                    << ' ' << std::right << std::setw(10)
-                   << number_text(std::optional<double>{rank.close})
+                   << number_text(std::optional<double>{displayed_price(rank)})
                    << ' ' << std::setw(6)
                    << fit_text(ratio_text(rank.relative_volume.bar_ratio), 6)
                    << ' ' << std::setw(7) << compact_vwap_state(rank.vwap_structure)
@@ -488,7 +499,7 @@ void print_responsive_rotation_rank(
         } else if (layout == RotationLayout::comfortable) {
             output << std::left << std::setw(6) << fit_text(rank.symbol, 6)
                    << "  " << std::right << std::setw(10)
-                   << number_text(std::optional<double>{rank.close})
+                   << number_text(std::optional<double>{displayed_price(rank)})
                    << "  " << std::setw(7)
                    << fit_text(ratio_text(rank.relative_volume.bar_ratio), 7)
                    << "  " << std::setw(7)
@@ -517,7 +528,7 @@ void print_responsive_rotation_rank(
         } else if (layout == RotationLayout::compact) {
             output << std::left << std::setw(5) << fit_text(rank.symbol, 5)
                    << ' ' << std::right << std::setw(9)
-                   << number_text(std::optional<double>{rank.close})
+                   << number_text(std::optional<double>{displayed_price(rank)})
                    << ' ' << std::setw(6)
                    << fit_text(ratio_text(rank.relative_volume.bar_ratio), 6)
                    << ' ' << std::setw(6) << compact_vwap_state(rank.vwap_structure)
@@ -541,7 +552,7 @@ void print_responsive_rotation_rank(
         } else {
             output << std::left << std::setw(5) << fit_text(rank.symbol, 5)
                    << ' ' << std::right << std::setw(8)
-                   << number_text(std::optional<double>{rank.close})
+                   << number_text(std::optional<double>{displayed_price(rank)})
                    << ' ' << std::setw(5)
                    << fit_text(ratio_text(rank.relative_volume.bar_ratio), 5)
                    << ' ' << std::setw(5) << compact_vwap_state(rank.vwap_structure)
@@ -673,7 +684,7 @@ void print_responsive_rotation_rank(
     if (layout == RotationLayout::regular) {
         output << std::left << std::setw(6) << fit_text(rank.symbol, 6)
                << ' ' << std::right << std::setw(10)
-               << number_text(std::optional<double>{rank.close})
+               << number_text(std::optional<double>{displayed_price(rank)})
                << ' ' << std::setw(6)
                << fit_text(ratio_text(rank.relative_volume.bar_ratio), 6)
                << ' ' << std::setw(7) << compact_vwap_state(rank.vwap_structure)
@@ -712,7 +723,7 @@ void print_responsive_rotation_rank(
     if (layout == RotationLayout::comfortable) {
         output << std::left << std::setw(6) << fit_text(rank.symbol, 6)
                << "  " << std::right << std::setw(10)
-               << number_text(std::optional<double>{rank.close})
+               << number_text(std::optional<double>{displayed_price(rank)})
                << "  " << std::setw(7)
                << fit_text(ratio_text(rank.relative_volume.bar_ratio), 7)
                << "  " << std::setw(7)
@@ -749,7 +760,7 @@ void print_responsive_rotation_rank(
     if (layout == RotationLayout::compact) {
         output << std::left << std::setw(5) << fit_text(rank.symbol, 5)
                << ' ' << std::right << std::setw(9)
-               << number_text(std::optional<double>{rank.close})
+               << number_text(std::optional<double>{displayed_price(rank)})
                << ' ' << std::setw(6)
                << fit_text(ratio_text(rank.relative_volume.bar_ratio), 6)
                << ' ' << std::setw(6) << compact_vwap_state(rank.vwap_structure)
@@ -780,7 +791,7 @@ void print_responsive_rotation_rank(
 
     output << std::left << std::setw(5) << fit_text(rank.symbol, 5)
            << ' ' << std::right << std::setw(8)
-           << number_text(std::optional<double>{rank.close})
+           << number_text(std::optional<double>{displayed_price(rank)})
            << ' ' << std::setw(5)
            << fit_text(ratio_text(rank.relative_volume.bar_ratio), 5)
            << ' ' << std::setw(5) << compact_vwap_state(rank.vwap_structure)
@@ -926,7 +937,7 @@ void print_market_snapshot(std::ostream& output, const domain::EtfSnapshot& snap
 {
     output << std::left << std::setw(6) << snapshot.symbol
            << ' ' << std::right << std::setw(9) << std::fixed << std::setprecision(2)
-           << snapshot.close;
+           << displayed_price(snapshot);
     if (snapshot.session_vwap.has_value()) {
         output << ' ' << std::setw(9) << *snapshot.session_vwap;
     } else {
@@ -950,7 +961,7 @@ void print_tqqq_execution(
 {
     output << std::left << std::setw(6) << fit_text(snapshot.symbol, 6)
            << ' ' << std::right << std::fixed << std::setprecision(2)
-           << std::setw(9) << snapshot.close;
+           << std::setw(9) << displayed_price(snapshot);
     if (snapshot.session_vwap.has_value()) {
         output << ' ' << std::setw(9) << *snapshot.session_vwap;
     } else {
@@ -1045,7 +1056,7 @@ void print_rotation_rank(
            << std::setw(10) << rank.benchmark_symbol
            << std::setw(28) << rank.name
            << std::right << std::setw(11) << std::fixed << std::setprecision(2)
-           << rank.close;
+           << displayed_price(rank);
     if (rank.session_vwap.has_value()) {
         output << std::setw(11) << *rank.session_vwap;
     } else {
@@ -1302,6 +1313,28 @@ void print_trade_section(
     } else {
         output << "Live context is connecting on the secondary IBKR client\n";
     }
+    std::array<std::size_t, 5> feed_counts{};
+    for (const auto& quote : context.quotes) {
+        const auto index = static_cast<std::size_t>(quote.feed_type);
+        if (index < feed_counts.size()) {
+            ++feed_counts[index];
+        }
+    }
+    output << "Level-1 feed (IBKR callback):";
+    bool printed_feed{};
+    for (std::size_t index = 1; index < feed_counts.size(); ++index) {
+        if (feed_counts[index] == 0) {
+            continue;
+        }
+        output << ' ' << domain::to_string(
+            static_cast<domain::MarketDataFeedType>(index)
+        ) << '=' << feed_counts[index];
+        printed_feed = true;
+    }
+    if (feed_counts[0] > 0 || !printed_feed) {
+        output << " UNKNOWN=" << feed_counts[0];
+    }
+    output << '\n';
 
     output << "\nDAY-TRADE POSITIONS (configured signal and long-leveraged ETFs only)\n";
     if (!context.positions_ready) {
@@ -1365,7 +1398,7 @@ void print_trade_section(
         }
     }
 
-    output << "\nLIVE ORDER FLOW (price-forming Last + BidAsk; rolling 30s/60s)\n";
+    output << "\nLIVE ORDER FLOW (real-time tick-by-tick Last + BidAsk; rolling 30s/60s)\n";
     if (!context.order_flow_connected) {
         output << "Waiting for QQQ/SOXX tick-by-tick subscriptions\n";
         return;

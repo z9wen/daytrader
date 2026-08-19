@@ -1,5 +1,6 @@
 #include "daytrader/backtest/DayTradeBacktester.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -77,6 +78,30 @@ void require(bool condition, const std::string& message)
     return result;
 }
 
+[[nodiscard]] daytrader::domain::InstrumentBars make_minute_session(
+    std::string symbol,
+    double initial_price,
+    double increment,
+    double half_range
+)
+{
+    daytrader::domain::InstrumentBars result{.symbol = std::move(symbol)};
+    for (int index = 0; index < 390; ++index) {
+        const double price = initial_price + increment * static_cast<double>(index);
+        result.bars.push_back(daytrader::domain::MarketBar{
+            .epoch_seconds = session_open + static_cast<std::int64_t>(index * 60),
+            .open = price,
+            .high = price + half_range,
+            .low = price - half_range,
+            .close = price,
+            .volume = 20'000.0,
+            .weighted_average_price = price,
+            .trade_count = 200,
+        });
+    }
+    return result;
+}
+
 void enters_on_next_bar_and_closes_the_same_session()
 {
     const std::vector<daytrader::domain::InstrumentBars> instruments{
@@ -141,28 +166,6 @@ void allows_a_second_trade_after_a_new_building_cycle()
             "both synthetic trades should belong to the same session");
     require(report.maximum_trades_in_session == 2,
             "the report should retain the observed per-session maximum");
-}
-
-void can_model_the_usual_primary_trade_only()
-{
-    const std::vector<daytrader::domain::InstrumentBars> instruments{
-        make_session("SPY", 100.0, 0.0, 0.10),
-        make_session("QQQ", 200.0, 0.0, 0.15),
-        make_two_wave_session("SOXX", 300.0, 1.0, 0.20),
-        make_two_wave_session("SOXL", 50.0, 0.5, 0.10),
-    };
-    const auto report = daytrader::backtest::DayTradeBacktester{
-        daytrader::backtest::DayTradeBacktestSettings{
-            .strategy_name = "primary-only",
-            .initial_stop_atr = 100.0,
-            .trailing_activation_atr = 100.0,
-            .per_side_cost_basis_points = 0.0,
-            .maximum_trades_per_session = 1,
-        }
-    }.run(instruments);
-
-    require(report.trades == 1,
-            "primary-only mode should ignore an otherwise valid second cycle");
 }
 
 void does_not_require_a_bullish_broad_market()
@@ -279,6 +282,31 @@ void excludes_warmup_bars_from_the_report_window()
     require(report.trades == 0, "warmup-only bars must not create trades");
 }
 
+void combines_one_minute_execution_with_five_minute_trend()
+{
+    const std::vector<daytrader::domain::InstrumentBars> instruments{
+        make_minute_session("SPY", 100.0, 0.0002, 0.10),
+        make_minute_session("QQQ", 200.0, 0.0006, 0.15),
+        make_minute_session("SOXX", 300.0, 0.0010, 0.20),
+        make_minute_session("SOXL", 50.0, 0.0006, 0.10),
+    };
+    const auto report = daytrader::backtest::DayTradeBacktester{
+        daytrader::backtest::DayTradeBacktestSettings{
+            .strategy_name = "dual-timeframe",
+            .source_bar_interval = std::chrono::minutes{1},
+            .trend_bar_interval = std::chrono::minutes{5},
+            .initial_stop_atr = 100.0,
+            .trailing_activation_atr = 100.0,
+            .per_side_cost_basis_points = 0.0,
+        }
+    }.run(instruments);
+
+    require(report.trades >= 1,
+            "five-minute trend should remain executable on one-minute bars");
+    require(report.trade_log.front().entry_timestamp % 60 == 0,
+            "dual-timeframe entry should execute on a one-minute boundary");
+}
+
 } // namespace
 
 int main()
@@ -286,12 +314,12 @@ int main()
     try {
         enters_on_next_bar_and_closes_the_same_session();
         allows_a_second_trade_after_a_new_building_cycle();
-        can_model_the_usual_primary_trade_only();
         does_not_require_a_bullish_broad_market();
         can_enter_after_the_old_morning_cutoff();
         supports_qqq_to_tqqq_execution();
         requires_the_leveraged_etf_to_reach_its_own_entry_zone();
         excludes_warmup_bars_from_the_report_window();
+        combines_one_minute_execution_with_five_minute_trend();
         std::cout << "DayTradeBacktesterTests passed\n";
         return 0;
     } catch (const std::exception& exception) {

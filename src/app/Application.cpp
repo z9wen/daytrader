@@ -60,7 +60,7 @@ void print_usage()
 {
     std::cout << "Usage:\n"
               << "  daytrader                 continuous live monitor\n"
-              << "  daytrader backtest [days|ytd] fetch IBKR RTH data (default 240)\n"
+              << "  daytrader backtest [days|ytd] fetch complete IBKR 1-minute data (default 240)\n"
               << "  daytrader orderflow-backtest [days|ytd] test SOXX tick flow (default 30)\n";
 }
 
@@ -72,6 +72,7 @@ int Application::run(int argc, char* argv[]) const
 {
     try {
         const auto config = config::AppConfig::from_environment();
+        std::clog << "IBKR TWS API SDK " << DAYTRADER_IBKR_API_VERSION << '\n';
         if (argc >= 2) {
             const std::string_view command{argv[1]};
             if (command == "--help" || command == "-h") {

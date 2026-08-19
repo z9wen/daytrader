@@ -48,11 +48,11 @@ std::vector<domain::ClassifiedTrade> TradeClassifier::classify(
     domain::TradeSide last_tick_direction{domain::TradeSide::unknown};
 
     for (const auto& trade : ordered_trades) {
-        // Cross-stream historical timestamps have only one-second precision.
-        // A quote from the trade's own second might actually have arrived after
-        // it, so historical replay conservatively uses only earlier seconds.
+        // Historical streams have one-second timestamps but no shared sequence.
+        // Use the latest quote from the same second instead of discarding that
+        // evidence; live classification still follows exact callback order.
         while (quote_index < ordered_quotes.size()
-               && ordered_quotes[quote_index].epoch_seconds < trade.epoch_seconds) {
+               && ordered_quotes[quote_index].epoch_seconds <= trade.epoch_seconds) {
             latest_quote = &ordered_quotes[quote_index++];
         }
 

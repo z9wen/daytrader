@@ -7,7 +7,7 @@
 
 namespace daytrader::backtest {
 
-// Fetches rolling RTH batches from IBKR and evaluates two VWAP-entry variants
+// Fetches complete one-minute batches from IBKR and evaluates two VWAP-entry variants
 // over one shared dataset so their results are directly comparable.
 class IbkrBacktestRunner {
 public:

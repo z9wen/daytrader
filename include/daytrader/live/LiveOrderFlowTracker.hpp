@@ -14,14 +14,14 @@ namespace daytrader::live {
 
 struct LiveOrderFlowSettings {
     std::chrono::seconds maximum_quote_age{2};
-    std::chrono::seconds retained_history{120};
     double price_epsilon{1e-8};
     std::string time_zone{"America/New_York"};
     bool regular_trading_hours_only{};
 };
 
-// Incremental quote-test/tick-rule classifier for one live symbol. Only the
-// bounded recent event window is retained.
+// Incremental quote-test/tick-rule classifier for one live symbol. Raw events
+// are retained for the lifetime of the tracker; analysis windows select the
+// relevant observations without deleting the source stream.
 class LiveOrderFlowTracker {
 public:
     explicit LiveOrderFlowTracker(
@@ -44,7 +44,6 @@ public:
 
 private:
     [[nodiscard]] bool accepts_timestamp(std::int64_t epoch_seconds) const;
-    void prune(std::int64_t epoch_seconds);
 
     std::string symbol_;
     LiveOrderFlowSettings settings_;

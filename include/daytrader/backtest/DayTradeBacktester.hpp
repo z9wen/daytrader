@@ -3,6 +3,7 @@
 #include "daytrader/backtest/BacktestReport.hpp"
 #include "daytrader/domain/InstrumentBars.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -19,18 +20,18 @@ struct DayTradeBacktestSettings {
     std::string signal_symbol{"SOXX"};
     std::string trade_symbol{"SOXL"};
     std::string time_zone{"America/New_York"};
-    // Scan the full practical RTH entry window. Premarket needs a separate
-    // extended-hours cache and is deliberately not mixed into this dataset.
-    int entry_start_minute{9 * 60 + 30};
-    int entry_end_minute{15 * 60 + 30};
-    int forced_exit_signal_minute{15 * 60 + 45};
+    std::chrono::seconds source_bar_interval{std::chrono::minutes{5}};
+    std::chrono::seconds trend_bar_interval{std::chrono::minutes{5}};
+    // Optional research filters. By default every bar supplied by IBKR,
+    // including premarket and after-hours, may produce an entry. Positions are
+    // still closed when the New York trading date changes.
+    std::optional<int> entry_start_minute;
+    std::optional<int> entry_end_minute;
+    std::optional<int> forced_exit_signal_minute;
     double initial_stop_atr{1.0};
     double trailing_activation_atr{0.75};
     double trailing_distance_atr{0.75};
     double per_side_cost_basis_points{2.0};
-    // The first trade is primary. A second trade is optional and requires a
-    // fresh BUILDING -> STRONG cycle after the first position has closed.
-    std::size_t maximum_trades_per_session{2};
     // Older bars may still be supplied as indicator warm-up, but they cannot
     // create trades or inflate the reported number of tested sessions.
     std::optional<std::int64_t> earliest_entry_timestamp;

@@ -20,7 +20,6 @@ LiveOrderFlowTracker::LiveOrderFlowTracker(
         throw std::invalid_argument("live Order Flow symbol cannot be empty");
     }
     if (settings_.maximum_quote_age < std::chrono::seconds::zero()
-        || settings_.retained_history < std::chrono::seconds{60}
         || settings_.price_epsilon < 0.0) {
         throw std::invalid_argument("live Order Flow settings are invalid");
     }
@@ -51,7 +50,6 @@ void LiveOrderFlowTracker::on_quote(
     };
     latest_quote_ = quote;
     quotes_.push_back(std::move(quote));
-    prune(epoch_seconds);
 }
 
 void LiveOrderFlowTracker::on_trade(
@@ -110,7 +108,6 @@ void LiveOrderFlowTracker::on_trade(
         .side = side,
         .method = method,
     });
-    prune(epoch_seconds);
 }
 
 domain::LiveOrderFlowSnapshot LiveOrderFlowTracker::snapshot(
@@ -145,17 +142,6 @@ bool LiveOrderFlowTracker::accepts_timestamp(std::int64_t epoch_seconds) const
     }
     const int minute = time_formatter_.minutes_since_midnight(epoch_seconds);
     return minute >= 9 * 60 + 30 && minute < 16 * 60;
-}
-
-void LiveOrderFlowTracker::prune(std::int64_t epoch_seconds)
-{
-    const auto cutoff = epoch_seconds - settings_.retained_history.count();
-    while (!trades_.empty() && trades_.front().trade.epoch_seconds < cutoff) {
-        trades_.pop_front();
-    }
-    while (!quotes_.empty() && quotes_.front().epoch_seconds < cutoff) {
-        quotes_.pop_front();
-    }
 }
 
 } // namespace daytrader::live

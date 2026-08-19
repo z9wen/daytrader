@@ -1,6 +1,6 @@
 #include "daytrader/ibkr/TwsHistoricalTickClient.hpp"
 
-#include "daytrader/ibkr/HistoricalRequestPacer.hpp"
+#include "daytrader/ibkr/IbkrApiCompatibility.hpp"
 
 #include "Contract.h"
 #include "Decimal.h"
@@ -31,7 +31,6 @@ namespace daytrader::ibkr {
 namespace {
 
 constexpr int first_trades_request_id = 7'001;
-constexpr int first_bid_ask_request_id = 7'101;
 
 enum class TickStream {
     trades,
@@ -54,7 +53,7 @@ enum class TickStream {
 
 [[nodiscard]] double decimal_to_size(Decimal value)
 {
-    if (value == UNSET_DECIMAL) {
+    if (is_unset_decimal(value)) {
         return 0.0;
     }
     const double converted = DecimalFunctions::decimalToDouble(value);
@@ -106,20 +105,8 @@ public:
     {
         prepare(request);
         connect();
-        auto deadline = std::chrono::steady_clock::now() + settings_.request_timeout;
-        auto observed_activity = activity_counter_.load();
         while (!complete_.load() && !failed_.load()) {
             process_messages();
-            const auto current_activity = activity_counter_.load();
-            const auto now = std::chrono::steady_clock::now();
-            if (current_activity != observed_activity) {
-                // Intentional pacing can sleep for several minutes. Only a
-                // lack of progress after a request is active should time out.
-                observed_activity = current_activity;
-                deadline = now + settings_.request_timeout;
-            } else if (now >= deadline) {
-                fail("timed out waiting for IBKR historical ticks");
-            }
         }
 
         shutdown();
@@ -146,7 +133,6 @@ public:
         if (stream_ != TickStream::trades || request_id != active_request_id_) {
             return;
         }
-        ++activity_counter_;
         for (const auto& tick : ticks) {
             const double size = decimal_to_size(tick.size);
             if (tick.time > request_.end_timestamp || size <= 0.0
@@ -163,7 +149,14 @@ public:
         }
         if (done && !failed_.load()) {
             if (needs_older_trades()) {
-                trades_cursor_ = earliest_trade_timestamp() - 1;
+                const auto next_cursor = earliest_trade_timestamp() - 1;
+                if (next_cursor >= trades_cursor_) {
+                    fail(
+                        "IBKR trade-tick pagination stopped before the requested lookback"
+                    );
+                    return;
+                }
+                trades_cursor_ = next_cursor;
                 request_trades_page();
             } else {
                 stream_ = TickStream::bid_ask;
@@ -181,7 +174,6 @@ public:
         if (stream_ != TickStream::bid_ask || request_id != active_request_id_) {
             return;
         }
-        ++activity_counter_;
         for (const auto& tick : ticks) {
             if (tick.time > request_.end_timestamp) {
                 continue;
@@ -197,7 +189,14 @@ public:
         }
         if (done) {
             if (!failed_.load() && needs_older_quotes()) {
-                quotes_cursor_ = earliest_quote_timestamp() - 1;
+                const auto next_cursor = earliest_quote_timestamp() - 1;
+                if (next_cursor >= quotes_cursor_) {
+                    fail(
+                        "IBKR bid/ask pagination stopped before the requested lookback"
+                    );
+                    return;
+                }
+                quotes_cursor_ = next_cursor;
                 request_bid_ask_page();
             } else {
                 normalize_result();
@@ -208,7 +207,7 @@ public:
 
     void error(
         int request_id,
-        std::time_t,
+        IbkrErrorTime,
         int error_code,
         const std::string& error_text,
         const std::string&
@@ -251,15 +250,15 @@ private:
         if (request.end_timestamp <= 0) {
             throw std::invalid_argument("historical-tick end timestamp must be positive");
         }
-        if (request.number_of_ticks <= 0 || request.number_of_ticks > 1'000) {
-            throw std::invalid_argument("IBKR historical-tick count must be 1..1000");
+        if (request.number_of_ticks <= 0
+            || request.number_of_ticks > historical_tick_maximum_results) {
+            throw std::invalid_argument(
+                "historical-tick result count must be between 1 and IBKR's "
+                "documented maximum of 1000"
+            );
         }
         if (request.minimum_lookback_seconds <= 0) {
             throw std::invalid_argument("historical-tick lookback must be positive");
-        }
-        if (request.maximum_pages_per_stream <= 0
-            || request.maximum_pages_per_stream > 20) {
-            throw std::invalid_argument("historical-tick page limit must be 1..20");
         }
         request_ = request;
         result_ = domain::OrderFlowTicks{
@@ -269,14 +268,12 @@ private:
         complete_.store(false);
         failed_.store(false);
         request_started_.store(false);
-        activity_counter_.store(0);
         shutting_down_.store(false);
         stream_ = TickStream::trades;
-        trades_pages_ = 0;
-        quote_pages_ = 0;
         trades_cursor_ = request.end_timestamp;
         quotes_cursor_ = request.end_timestamp;
         active_request_id_ = 0;
+        next_request_id_ = first_trades_request_id;
         {
             std::lock_guard lock{failure_mutex_};
             failure_message_.clear();
@@ -332,22 +329,18 @@ private:
     [[nodiscard]] bool needs_older_trades() const
     {
         return !result_.trades.empty()
-            && earliest_trade_timestamp() > target_start_timestamp()
-            && trades_pages_ < request_.maximum_pages_per_stream;
+            && earliest_trade_timestamp() > target_start_timestamp();
     }
 
     [[nodiscard]] bool needs_older_quotes() const
     {
         return !result_.quotes.empty()
-            && earliest_quote_timestamp() > target_start_timestamp()
-            && quote_pages_ < request_.maximum_pages_per_stream;
+            && earliest_quote_timestamp() > target_start_timestamp();
     }
 
     void request_trades_page()
     {
-        HistoricalRequestPacer::shared().acquire(1);
-        active_request_id_ = first_trades_request_id + trades_pages_;
-        ++trades_pages_;
+        active_request_id_ = next_request_id_++;
         client_.reqHistoricalTicks(
             active_request_id_,
             make_contract(request_.contract),
@@ -359,15 +352,11 @@ private:
             false,
             TagValueListSPtr{}
         );
-        ++activity_counter_;
     }
 
     void request_bid_ask_page()
     {
-        // IBKR counts each BID_ASK historical request twice for pacing.
-        HistoricalRequestPacer::shared().acquire(2);
-        active_request_id_ = first_bid_ask_request_id + quote_pages_;
-        ++quote_pages_;
+        active_request_id_ = next_request_id_++;
         client_.reqHistoricalTicks(
             active_request_id_,
             make_contract(request_.contract),
@@ -379,7 +368,6 @@ private:
             false,
             TagValueListSPtr{}
         );
-        ++activity_counter_;
     }
 
     void normalize_result()
@@ -457,11 +445,9 @@ private:
     std::atomic_bool failed_{};
     std::atomic_bool request_started_{};
     std::atomic_bool shutting_down_{};
-    std::atomic_size_t activity_counter_{};
     int active_request_id_{};
+    int next_request_id_{first_trades_request_id};
     TickStream stream_{TickStream::trades};
-    int trades_pages_{};
-    int quote_pages_{};
     std::int64_t trades_cursor_{};
     std::int64_t quotes_cursor_{};
     mutable std::mutex failure_mutex_;

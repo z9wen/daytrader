@@ -25,7 +25,8 @@ public:
 
     // One-shot historical fetch, primarily useful for diagnostics and tests.
     [[nodiscard]] std::vector<domain::InstrumentBars> fetch_historical_bars(
-        const std::vector<config::HistoricalDataSettings>& requests
+        const std::vector<config::HistoricalDataSettings>& requests,
+        const std::function<bool()>& stop_requested = {}
     );
 
     // Keeps subscriptions open and invokes the handler once per common completed bar.

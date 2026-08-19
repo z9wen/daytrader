@@ -8,17 +8,19 @@
 
 namespace daytrader::ibkr {
 
+// reqHistoricalTicks documents 1,000 as the maximum result count per request.
+inline constexpr int historical_tick_maximum_results = 1'000;
+
 struct HistoricalTickRequest {
     config::HistoricalDataSettings contract;
     std::int64_t end_timestamp{};
-    int number_of_ticks{1'000};
+    int number_of_ticks{historical_tick_maximum_results};
     int minimum_lookback_seconds{60};
-    int maximum_pages_per_stream{6};
 };
 
-// Fetches the most recent trade and bid/ask events ending at one candidate
-// entry. Bounded backward paging reaches the requested lookback without the
-// pacing cost of full-day tick replay.
+// Fetches trade and bid/ask events ending at one candidate entry. Backward
+// paging continues until both streams cover the requested lookback. Each next
+// page is submitted immediately; TWS/IBKR remains the authority on pacing.
 class TwsHistoricalTickClient {
 public:
     explicit TwsHistoricalTickClient(config::IbkrConnectionSettings settings);

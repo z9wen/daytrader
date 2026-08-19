@@ -105,8 +105,8 @@ void signal_etf_order_flow_confirms_entry()
         nullptr,
         true
     );
-    require(low_quality.entry == domain::LongEntryDecision::wait_for_flow,
-            "low-quality DeltaRatio must remain WAIT_FLOW");
+    require(low_quality.entry == domain::LongEntryDecision::ready,
+            "BUY_EFFECTIVE should remain actionable without an arbitrary quality cutoff");
 
     const auto buying = analyzer.analyze(
         ready_signal(),

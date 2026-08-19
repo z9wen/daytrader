@@ -105,6 +105,7 @@ struct EntryZone {
 struct EtfSnapshot {
     std::string symbol;
     double close{};
+    std::optional<double> live_price;
     std::optional<double> session_vwap;
     double ema20{};
     double ema20_change_percent{};
@@ -133,6 +134,7 @@ struct RankedEtf {
     std::string leveraged_short_symbol;
     std::size_t aligned_bar_count{};
     double close{};
+    std::optional<double> live_price;
     std::optional<double> session_vwap;
     double ema20{};
     double ema20_change_percent{};

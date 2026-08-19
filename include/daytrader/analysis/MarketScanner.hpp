@@ -24,9 +24,18 @@ public:
         const std::vector<universe::EtfDefinition>& etfs
     ) const;
 
+    // Uses stable larger bars for trend/RS and a separate faster completed-bar
+    // view for VWAP, RVOL and entry timing.
+    [[nodiscard]] domain::MarketScan scan(
+        const std::vector<domain::InstrumentBars>& trend_instruments,
+        const std::vector<domain::InstrumentBars>& execution_instruments,
+        const std::vector<universe::EtfDefinition>& etfs,
+        std::chrono::seconds execution_bar_interval
+    ) const;
+
 private:
     time::TimeZoneFormatter time_formatter_;
-    std::chrono::seconds bar_interval_;
+    std::chrono::seconds trend_bar_interval_;
 };
 
 } // namespace daytrader::analysis

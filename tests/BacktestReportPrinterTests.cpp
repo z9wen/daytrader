@@ -45,10 +45,10 @@ void explains_the_revised_backtest_scope()
 
     require(contains(rendered, "No hard SPY/QQQ market gate"),
             "report must state that the broad market is context, not a gate");
-    require(contains(rendered, "RTH signals 09:30-15:30 ET"),
-            "report must disclose its complete RTH entry window");
-    require(contains(rendered, "one primary trade plus at most one optional"),
-            "report must disclose the optional second-trade rule");
+    require(contains(rendered, "including premarket and after-hours"),
+            "report must disclose its extended-hours coverage");
+    require(contains(rendered, "no daily trade-count cap"),
+            "report must disclose that re-entry count is data-driven");
     require(contains(rendered, "Order Flow is NOT replayed"),
             "report must not imply missing historical flow was confirmed");
     require(contains(rendered, "BEARISH 1 (100.0% win, 0.960% avg)"),

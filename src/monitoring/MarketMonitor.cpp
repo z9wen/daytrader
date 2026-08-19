@@ -2,18 +2,23 @@
 
 #include "daytrader/analysis/MarketScanner.hpp"
 #include "daytrader/analysis/LiveTradeContextEnricher.hpp"
+#include "daytrader/ibkr/IbkrErrorClassifier.hpp"
+#include "daytrader/ibkr/HistoricalRequestPlanner.hpp"
 #include "daytrader/ibkr/TwsLiveContextClient.hpp"
 #include "daytrader/ibkr/TwsMarketDataClient.hpp"
 #include "daytrader/live/LiveTradeContextStore.hpp"
+#include "daytrader/market_data/BarTimeframeTransformer.hpp"
 #include "daytrader/market_data/InstrumentBarsMerger.hpp"
 #include "daytrader/presentation/TerminalDashboard.hpp"
 #include "daytrader/storage/MarketDataCsvStore.hpp"
+#include "daytrader/time/TimeZoneFormatter.hpp"
 #include "daytrader/universe/EtfUniverse.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <exception>
 #include <iostream>
+#include <ranges>
 #include <mutex>
 #include <optional>
 #include <stop_token>
@@ -23,6 +28,32 @@
 namespace daytrader::monitoring {
 namespace {
 
+[[nodiscard]] int requested_history_days(const config::AppConfig& config)
+{
+    if (config.monitoring.history_lookback_days > 0) {
+        return config.monitoring.history_lookback_days;
+    }
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+    const auto date = time::TimeZoneFormatter{config.time_zone}.format_date(now);
+    const int year = std::stoi(date.substr(0, 4));
+    const unsigned month = static_cast<unsigned>(std::stoi(date.substr(5, 2)));
+    const unsigned day_of_month = static_cast<unsigned>(std::stoi(date.substr(8, 2)));
+    using namespace std::chrono;
+    const sys_days today = year_month_day{
+        std::chrono::year{year},
+        std::chrono::month{month},
+        std::chrono::day{day_of_month},
+    };
+    const sys_days first = year_month_day{
+        std::chrono::year{year},
+        January,
+        day{1},
+    };
+    return static_cast<int>((today - first).count()) + 1;
+}
+
 void wait_before_retry(
     std::chrono::seconds delay,
     const std::function<bool()>& stop_requested
@@ -31,6 +62,113 @@ void wait_before_retry(
     const auto deadline = std::chrono::steady_clock::now() + delay;
     while (!stop_requested() && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds{250});
+    }
+}
+
+[[nodiscard]] std::vector<std::string> symbols_missing_coverage(
+    const std::vector<domain::InstrumentBars>& history,
+    const std::vector<config::HistoricalDataSettings>& requests,
+    std::int64_t target_start
+)
+{
+    std::vector<std::string> missing;
+    for (const auto& request : requests) {
+        const auto found = std::ranges::find(
+            history,
+            request.symbol,
+            &domain::InstrumentBars::symbol
+        );
+        if (found == history.end() || found->bars.empty()
+            || found->bars.front().epoch_seconds > target_start) {
+            missing.push_back(request.symbol);
+        }
+    }
+    return missing;
+}
+
+void backfill_minute_history(
+    const config::AppConfig& config,
+    const std::vector<config::HistoricalDataSettings>& request_templates,
+    std::vector<domain::InstrumentBars>& history,
+    const storage::MarketDataCsvStore& cache,
+    std::mutex& history_mutex,
+    const std::function<bool()>& stop_requested
+)
+{
+    const int lookback_days = requested_history_days(config);
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+    const auto target_start = now
+        - static_cast<std::int64_t>(lookback_days) * 86'400;
+    std::vector<std::string> missing;
+    {
+        const std::lock_guard lock{history_mutex};
+        missing = symbols_missing_coverage(history, request_templates, target_start);
+    }
+    if (missing.empty()) {
+        return;
+    }
+
+    std::clog << "Background backfill of complete " << lookback_days
+              << "-day 1-minute history for " << missing.size()
+              << " symbols into "
+              << cache.directory().string() << '\n';
+    for (const auto window : ibkr::plan_one_minute_day_windows(lookback_days)) {
+        std::vector<config::HistoricalDataSettings> batch;
+        batch.reserve(missing.size());
+        for (const auto& request : request_templates) {
+            if (std::ranges::find(missing, request.symbol) == missing.end()) {
+                continue;
+            }
+            auto minute = request;
+            minute.duration = std::to_string(window.duration_days) + " D";
+            minute.bar_size = "1 min";
+            minute.regular_trading_hours_only = false;
+            minute.end_delay = std::chrono::hours{
+                static_cast<std::int64_t>(window.end_delay_days) * 24
+            };
+            batch.push_back(std::move(minute));
+        }
+
+        std::clog << "Fetching background 1-minute IBKR batch: "
+                  << window.duration_days << " days ending "
+                  << window.end_delay_days << " days ago\n";
+        std::vector<domain::InstrumentBars> received;
+        while (!stop_requested()) {
+            try {
+                auto connection = config.ibkr;
+                connection.client_id = config.monitoring.backfill_client_id;
+                ibkr::TwsMarketDataClient client{std::move(connection)};
+                received = client.fetch_historical_bars(batch, stop_requested);
+                break;
+            } catch (const std::exception& exception) {
+                const bool pacing = ibkr::is_pacing_or_rate_limit_error(
+                    exception.what()
+                );
+                const bool disconnected = ibkr::is_connection_interruption_error(
+                    exception.what()
+                );
+                if (!pacing && !disconnected) {
+                    throw;
+                }
+                std::cerr << (pacing
+                        ? "IBKR pacing response received"
+                        : "IBKR connection interrupted")
+                          << "; retrying this complete batch after reconnect: "
+                          << exception.what() << '\n';
+                wait_before_retry(config.monitoring.reconnect_delay, stop_requested);
+            }
+        }
+        if (stop_requested()) {
+            return;
+        }
+        {
+            const std::lock_guard lock{history_mutex};
+            market_data::merge_instrument_bars(history, received);
+            market_data::sort_and_deduplicate_bars(history);
+            cache.save(history);
+        }
     }
 }
 
@@ -46,7 +184,10 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
     auto requests = universe::monitoring_data_requests(config_.etfs);
     for (auto& request : requests) {
         request.duration = config_.monitoring.history_duration;
-        request.maximum_bars = config_.monitoring.history_maximum_bars;
+        request.bar_size = "1 min";
+        // Preserve and analyze pre/post-market bars instead of deleting them
+        // before the strategy sees the source series.
+        request.regular_trading_hours_only = false;
     }
     const auto synchronization_symbols = universe::signal_symbols(config_.etfs);
     std::vector<std::string> request_symbols;
@@ -55,9 +196,10 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
         request_symbols.push_back(request.symbol);
     }
 
-    const storage::MarketDataCsvStore cache{config_.data_directory};
+    const storage::MarketDataCsvStore cache{config_.minute_data_directory};
     auto history = cache.load(request_symbols);
     market_data::sort_and_deduplicate_bars(history);
+    std::mutex history_mutex;
     const analysis::MarketScanner scanner{
         config_.time_zone,
         config_.monitoring.bar_interval,
@@ -80,7 +222,9 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
 
     dashboard.start();
     std::cout << "Continuous monitoring enabled: scan after each completed "
-              << config_.monitoring.bar_interval.count() << "-second bar; Ctrl+C to stop\n";
+              << config_.monitoring.source_bar_interval.count()
+              << "-second bar with " << config_.monitoring.bar_interval.count()
+              << "-second trend context; Ctrl+C to stop\n";
 
     std::jthread live_thread{[&](std::stop_token token) {
         auto settings = config_.ibkr;
@@ -93,6 +237,7 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
                 ibkr::TwsLiveContextClient client{settings};
                 client.monitor(
                     live_requests,
+                    requests,
                     day_trade_position_symbols,
                     [&](domain::LiveTradeContext context) {
                         live_context_store.update(std::move(context));
@@ -109,8 +254,8 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
         }
     }};
 
-    // Historical bars change only at completed five-minute boundaries, while
-    // P&L and DeltaRatio remain useful at one-second dashboard cadence.
+    // Completed one-minute bars update execution state; streaming prices, P&L
+    // and DeltaRatio continue to refresh the dashboard every second.
     std::jthread refresh_thread{[&](std::stop_token token) {
         const analysis::LiveTradeContextEnricher enricher;
         while (!token.stop_requested() && !stop_requested()) {
@@ -133,33 +278,68 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
         }
     }};
 
+    // Historical coverage runs independently on its own TWS client ID. It may
+    // take hours or encounter pacing responses without delaying live bars,
+    // streaming prices, Order Flow, positions, or terminal input.
+    std::jthread backfill_thread{[&](std::stop_token token) {
+        const auto backfill_stop = [&] {
+            return token.stop_requested() || stop_requested();
+        };
+        try {
+            backfill_minute_history(
+                config_,
+                requests,
+                history,
+                cache,
+                history_mutex,
+                backfill_stop
+            );
+        } catch (const std::exception& exception) {
+            if (!backfill_stop()) {
+                std::cerr << "daytrader background backfill: "
+                          << exception.what() << '\n';
+            }
+        }
+    }};
+
     while (!stop_requested()) {
         try {
             auto bar_connection = config_.ibkr;
-            bar_connection.request_timeout = config_.monitoring.initial_data_timeout;
             std::cout << "Connecting to IBKR TWS at " << config_.ibkr.host << ':'
                       << config_.ibkr.port << " (clientId=" << config_.ibkr.client_id << ")\n";
             std::cout << "Subscribing to " << requests.size()
                       << " signal and long-leveraged ETFs"
                       << " (short/inverse tickers are reference-only)\n";
-            std::cout << "Merging the latest " << config_.monitoring.history_duration
-                      << " with local history at " << cache.directory().string() << '\n';
+            std::cout << "Merging live 1-minute bars with complete local history at "
+                      << cache.directory().string() << '\n';
 
             ibkr::TwsMarketDataClient client{bar_connection};
             client.monitor_historical_bars(
                 requests,
                 synchronization_symbols,
-                config_.monitoring.bar_interval,
+                config_.monitoring.source_bar_interval,
                 [&](const std::vector<domain::InstrumentBars>& bars) {
-                    // The small live request keeps startup fast. Merging it with
-                    // the durable cache supplies the prior sessions needed by
-                    // time-of-day RVOL without repeatedly downloading them.
-                    market_data::merge_instrument_bars(history, bars);
-                    market_data::sort_and_deduplicate_bars(history);
-                    auto scan = scanner.scan(history, config_.etfs);
+                    domain::MarketScan scan;
+                    {
+                        const std::lock_guard lock{history_mutex};
+                        market_data::merge_instrument_bars(history, bars);
+                        market_data::sort_and_deduplicate_bars(history);
+                        const auto trend_bars = market_data::resample_bars(
+                            history,
+                            config_.monitoring.source_bar_interval,
+                            config_.monitoring.bar_interval
+                        );
+                        scan = scanner.scan(
+                            trend_bars,
+                            history,
+                            config_.etfs,
+                            config_.monitoring.source_bar_interval
+                        );
+                    }
                     if (!last_scan_timestamp.has_value()
                         || scan.epoch_seconds > *last_scan_timestamp) {
                         try {
+                            const std::lock_guard lock{history_mutex};
                             cache.save(history);
                         } catch (const std::exception& exception) {
                             // A cache write failure must not interrupt live risk
@@ -191,8 +371,10 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
         }
     }
 
+    backfill_thread.request_stop();
     refresh_thread.request_stop();
     live_thread.request_stop();
+    backfill_thread.join();
     refresh_thread.join();
     live_thread.join();
     dashboard.stop();

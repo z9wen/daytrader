@@ -100,9 +100,12 @@ namespace {
 [[nodiscard]] std::vector<domain::RankedEtf> build_rankings(
     universe::EtfGroup target_group,
     const std::vector<universe::EtfDefinition>& etfs,
-    const market_data::InstrumentBarsLookup& bars,
-    const market_data::BarSeriesAligner& aligner,
-    std::int64_t required_timestamp,
+    const market_data::InstrumentBarsLookup& trend_bars,
+    const market_data::BarSeriesAligner& trend_aligner,
+    std::int64_t trend_timestamp,
+    const market_data::InstrumentBarsLookup& execution_bars,
+    const market_data::BarSeriesAligner& execution_aligner,
+    std::int64_t execution_timestamp,
     const time::TimeZoneFormatter& time_formatter
 )
 {
@@ -114,40 +117,50 @@ namespace {
             continue;
         }
 
-        const auto pairs = aligner.align_completed(
-            bars.at(etf.market_data.symbol),
-            bars.at(etf.benchmark_symbol)
+        const auto pairs = trend_aligner.align_completed(
+            trend_bars.at(etf.market_data.symbol),
+            trend_bars.at(etf.benchmark_symbol)
         );
-        auto rank = ranker.rank(etf, pairs, required_timestamp, time_formatter);
+        auto rank = ranker.rank(etf, pairs, trend_timestamp, time_formatter);
         if (!rank.has_value()) {
             continue;
         }
 
-        const auto signal_vs_qqq = aligner.align_completed(
-            bars.at(etf.market_data.symbol),
-            bars.at("QQQ")
+        const auto signal_vs_qqq = trend_aligner.align_completed(
+            trend_bars.at(etf.market_data.symbol),
+            trend_bars.at("QQQ")
         );
         if (!signal_vs_qqq.empty()
-            && signal_vs_qqq.back().epoch_seconds == required_timestamp) {
+            && signal_vs_qqq.back().epoch_seconds == trend_timestamp) {
             rank->relative_strength_vs_qqq =
                 RelativeStrengthAnalyzer{}.analyze(signal_vs_qqq);
         }
 
+        if (const auto execution_snapshot = calculate_snapshot(
+                rank->symbol,
+                execution_bars,
+                execution_aligner,
+                execution_timestamp,
+                time_formatter
+            ); execution_snapshot.has_value()) {
+            rank->close = execution_snapshot->close;
+            rank->session_vwap = execution_snapshot->session_vwap;
+            rank->vwap_structure = execution_snapshot->vwap_structure;
+            rank->relative_volume = execution_snapshot->relative_volume;
+        }
         rank->entry_zone = calculate_entry_zone(
             rank->symbol,
-            bars,
-            aligner,
-            required_timestamp,
+            execution_bars,
+            execution_aligner,
+            execution_timestamp,
             time_formatter
         );
-        const bool show_leveraged_zone = target_group == universe::EtfGroup::industry
-            || rank->signal == domain::RelativeStrengthSignal::strong;
-        if (show_leveraged_zone && !rank->leveraged_long_symbol.empty()) {
+        if (!rank->leveraged_long_symbol.empty()) {
             rank->leveraged_entry_zone = calculate_entry_zone(
                 rank->leveraged_long_symbol,
-                bars,
-                aligner,
-                required_timestamp,
+                execution_bars,
+                execution_aligner,
+                execution_timestamp,
                 time_formatter
             );
         }
@@ -187,9 +200,9 @@ void add_long_opportunities(
 
 MarketScanner::MarketScanner(std::string time_zone, std::chrono::seconds bar_interval)
     : time_formatter_{std::move(time_zone)}
-    , bar_interval_{bar_interval}
+    , trend_bar_interval_{bar_interval}
 {
-    if (bar_interval_ <= std::chrono::seconds::zero()) {
+    if (trend_bar_interval_ <= std::chrono::seconds::zero()) {
         throw std::invalid_argument("bar interval must be positive");
     }
 }
@@ -199,44 +212,97 @@ domain::MarketScan MarketScanner::scan(
     const std::vector<universe::EtfDefinition>& etfs
 ) const
 {
-    const market_data::InstrumentBarsLookup bars{instruments};
-    const market_data::BarSeriesAligner aligner{bar_interval_};
-    const auto market_pairs = aligner.align_completed(bars.at("QQQ"), bars.at("SPY"));
+    return scan(instruments, instruments, etfs, trend_bar_interval_);
+}
+
+domain::MarketScan MarketScanner::scan(
+    const std::vector<domain::InstrumentBars>& trend_instruments,
+    const std::vector<domain::InstrumentBars>& execution_instruments,
+    const std::vector<universe::EtfDefinition>& etfs,
+    std::chrono::seconds execution_bar_interval
+) const
+{
+    if (execution_bar_interval <= std::chrono::seconds::zero()) {
+        throw std::invalid_argument("execution bar interval must be positive");
+    }
+    const market_data::InstrumentBarsLookup trend_bars{trend_instruments};
+    const market_data::InstrumentBarsLookup execution_bars{execution_instruments};
+    const market_data::BarSeriesAligner trend_aligner{trend_bar_interval_};
+    const market_data::BarSeriesAligner execution_aligner{execution_bar_interval};
+    const auto market_pairs = trend_aligner.align_completed(
+        trend_bars.at("QQQ"),
+        trend_bars.at("SPY")
+    );
     auto market = MarketRegimeAnalyzer{}.analyze(market_pairs, time_formatter_);
+    const auto execution_market_pairs = execution_aligner.align_completed(
+        execution_bars.at("QQQ"),
+        execution_bars.at("SPY")
+    );
+    if (execution_market_pairs.empty()) {
+        throw std::runtime_error("market scan requires completed execution bars");
+    }
+    const auto execution_timestamp = execution_market_pairs.back().epoch_seconds;
+    const auto overlay_market_snapshot = [&](domain::EtfSnapshot& target) {
+        const auto snapshot = calculate_snapshot(
+            target.symbol,
+            execution_bars,
+            execution_aligner,
+            execution_timestamp,
+            time_formatter_
+        );
+        if (!snapshot.has_value()) {
+            return;
+        }
+        target.close = snapshot->close;
+        target.session_vwap = snapshot->session_vwap;
+        target.vwap_structure = snapshot->vwap_structure;
+        target.relative_volume = snapshot->relative_volume;
+    };
+    overlay_market_snapshot(market.spy);
+    overlay_market_snapshot(market.qqq);
     auto tqqq = calculate_snapshot(
         "TQQQ",
-        bars,
-        aligner,
-        market.epoch_seconds,
+        execution_bars,
+        execution_aligner,
+        execution_timestamp,
         time_formatter_
     );
     auto tqqq_entry_zone = calculate_entry_zone(
         "TQQQ",
-        bars,
-        aligner,
-        market.epoch_seconds,
+        execution_bars,
+        execution_aligner,
+        execution_timestamp,
         time_formatter_
     );
     std::optional<domain::VolatilitySnapshot> vix;
-    if (const auto* vix_bars = bars.find("VIX"); vix_bars != nullptr) {
-        const auto vix_pairs = aligner.align_completed(*vix_bars, bars.at("SPY"));
+    if (const auto* vix_bars = trend_bars.find("VIX"); vix_bars != nullptr) {
+        const auto vix_pairs = trend_aligner.align_completed(
+            *vix_bars,
+            trend_bars.at("SPY")
+        );
         vix = VixAnalyzer{}.analyze(vix_pairs, market.epoch_seconds);
     }
 
     auto sector_rankings = build_rankings(
         universe::EtfGroup::sector,
         etfs,
-        bars,
-        aligner,
+        trend_bars,
+        trend_aligner,
         market.epoch_seconds,
+        execution_bars,
+        execution_aligner,
+        execution_timestamp,
         time_formatter_
     );
     auto industry_rankings = build_rankings(
         universe::EtfGroup::industry,
         etfs,
-        bars,
-        aligner,
+        trend_bars,
+        trend_aligner,
         market.epoch_seconds,
+        execution_bars,
+        execution_aligner,
+        execution_timestamp,
         time_formatter_
     );
     add_long_opportunities(sector_rankings, market.regime);
@@ -256,7 +322,7 @@ domain::MarketScan MarketScanner::scan(
         : std::nullopt;
 
     return domain::MarketScan{
-        .epoch_seconds = market.epoch_seconds,
+        .epoch_seconds = execution_timestamp,
         .aligned_market_bar_count = market.aligned_bar_count,
         .spy = std::move(market.spy),
         .qqq = std::move(market.qqq),

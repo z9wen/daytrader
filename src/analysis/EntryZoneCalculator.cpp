@@ -40,16 +40,11 @@ std::optional<domain::EntryZone> EntryZoneCalculator::calculate(
     const double half_width = atr * entry_zone_atr_half_width;
     const double lower = *snapshot.session_vwap - half_width;
     const double upper = *snapshot.session_vwap + half_width;
-    auto state = domain::EntryZoneState::trend_unconfirmed;
-    if (snapshot.trend_signal == domain::MarketTrendSignal::strong) {
-        if (snapshot.close > upper) {
-            state = domain::EntryZoneState::extended;
-        } else if (snapshot.close < lower) {
-            state = domain::EntryZoneState::below_zone;
-        } else {
-            state = domain::EntryZoneState::in_zone;
-        }
-    }
+    const auto state = snapshot.close > upper
+        ? domain::EntryZoneState::extended
+        : (snapshot.close < lower
+            ? domain::EntryZoneState::below_zone
+            : domain::EntryZoneState::in_zone);
 
     return domain::EntryZone{
         .symbol = std::move(symbol),

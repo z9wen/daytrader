@@ -39,11 +39,20 @@ void calculates_three_relative_strength_horizons()
     std::vector<MarketBar> benchmark;
     std::vector<daytrader::market_data::AlignedBarPair> pairs;
     for (std::size_t index = 0; index < 13; ++index) {
-        signal.push_back(MarketBar{.close = 100.0 + static_cast<double>(index)});
-        benchmark.push_back(MarketBar{.close = 100.0});
+        const auto timestamp = 1'700'000'000
+            + static_cast<std::int64_t>(index) * 300;
+        signal.push_back(MarketBar{
+            .epoch_seconds = timestamp,
+            .close = 100.0 + static_cast<double>(index),
+        });
+        benchmark.push_back(MarketBar{
+            .epoch_seconds = timestamp,
+            .close = 100.0,
+        });
     }
     for (std::size_t index = 0; index < signal.size(); ++index) {
         pairs.push_back(daytrader::market_data::AlignedBarPair{
+            .epoch_seconds = signal[index].epoch_seconds,
             .signal = &signal[index],
             .benchmark = &benchmark[index],
         });

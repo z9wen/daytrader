@@ -1,5 +1,7 @@
 #include "daytrader/ibkr/TwsLiveContextClient.hpp"
 
+#include "daytrader/ibkr/IbkrErrorClassifier.hpp"
+#include "daytrader/ibkr/IbkrApiCompatibility.hpp"
 #include "daytrader/live/LiveOrderFlowTracker.hpp"
 #include "daytrader/live/PositionTracker.hpp"
 
@@ -36,7 +38,9 @@ namespace {
 
 constexpr int first_live_tick_request_id = 20'001;
 constexpr int first_pnl_request_id = 30'001;
-constexpr int first_position_market_request_id = 40'001;
+constexpr int first_quote_request_id = 40'001;
+constexpr int first_position_market_request_id = 50'001;
+constexpr int live_market_data_type = 1;
 
 [[nodiscard]] bool is_informational_message(int error_code)
 {
@@ -90,12 +94,18 @@ public:
 
     void monitor(
         const std::vector<config::HistoricalDataSettings>& order_flow_symbols,
+        const std::vector<config::HistoricalDataSettings>& market_data_symbols,
         const std::vector<std::string>& position_symbols,
         const std::function<void(domain::LiveTradeContext)>& on_update,
         const std::function<bool()>& stop_requested
     )
     {
-        prepare(order_flow_symbols, position_symbols, on_update);
+        prepare(
+            order_flow_symbols,
+            market_data_symbols,
+            position_symbols,
+            on_update
+        );
         if (!stop_requested) {
             throw std::invalid_argument("live-context stop predicate is required");
         }
@@ -118,6 +128,10 @@ public:
         }
 
         client_.reqPositions();
+        // Live is IBKR's default, but declaring it makes the requested mode
+        // explicit. EWrapper.marketDataType still reports the actual mode for
+        // each Level-1 request (for example LIVE, FROZEN, or DELAYED).
+        client_.reqMarketDataType(live_market_data_type);
         for (std::size_t index = 0; index < subscriptions_.size(); ++index) {
             const auto& request = subscriptions_[index];
             Contract contract;
@@ -135,6 +149,29 @@ public:
             client_.reqTickByTickData(trade_id, contract, "Last", 0, false);
             client_.reqTickByTickData(quote_id, contract, "BidAsk", 0, false);
         }
+        for (std::size_t index = 0; index < market_data_subscriptions_.size(); ++index) {
+            const auto& request = market_data_subscriptions_[index];
+            Contract contract;
+            contract.symbol = request.symbol;
+            contract.secType = request.security_type;
+            contract.exchange = request.exchange;
+            contract.primaryExchange = request.primary_exchange;
+            contract.currency = request.currency;
+            const int request_id = first_quote_request_id
+                + static_cast<int>(index);
+            quote_requests_.emplace(
+                request_id,
+                QuoteState{.symbol = request.symbol}
+            );
+            client_.reqMktData(
+                request_id,
+                contract,
+                "",
+                false,
+                false,
+                TagValueListSPtr{}
+            );
+        }
         order_flow_connected_ = true;
         publish(true);
     }
@@ -146,7 +183,7 @@ public:
         double average_cost
     ) override
     {
-        if (contract.secType != "STK" || position == UNSET_DECIMAL
+        if (contract.secType != "STK" || is_unset_decimal(position)
             || !allowed_position_symbols_.contains(contract.symbol)) {
             return;
         }
@@ -246,7 +283,7 @@ public:
     void tickByTickAllLast(
         int request_id,
         int,
-        std::time_t timestamp,
+        IbkrTickTime timestamp,
         double price,
         Decimal size,
         const TickAttribLast& attributes,
@@ -255,7 +292,7 @@ public:
     ) override
     {
         const auto index = tracker_index(request_id);
-        if (!index.has_value() || size == UNSET_DECIMAL || attributes.unreported) {
+        if (!index.has_value() || is_unset_decimal(size) || attributes.unreported) {
             return;
         }
         trackers_[*index].on_trade(
@@ -268,7 +305,7 @@ public:
 
     void tickByTickBidAsk(
         int request_id,
-        std::time_t timestamp,
+        IbkrTickTime timestamp,
         double bid_price,
         double ask_price,
         Decimal bid_size,
@@ -277,7 +314,8 @@ public:
     ) override
     {
         const auto index = tracker_index(request_id);
-        if (!index.has_value() || bid_size == UNSET_DECIMAL || ask_size == UNSET_DECIMAL) {
+        if (!index.has_value() || is_unset_decimal(bid_size)
+            || is_unset_decimal(ask_size)) {
             return;
         }
         trackers_[*index].on_quote(
@@ -297,8 +335,38 @@ public:
         const TickAttrib&
     ) override
     {
+        if (!std::isfinite(price) || price <= 0.0) {
+            return;
+        }
+        if (const auto quote = quote_requests_.find(request_id);
+            quote != quote_requests_.end()) {
+            auto& state = quote->second;
+            switch (field) {
+            case BID:
+            case DELAYED_BID:
+                state.bid = price;
+                break;
+            case ASK:
+            case DELAYED_ASK:
+                state.ask = price;
+                break;
+            case LAST:
+            case DELAYED_LAST:
+            case LAST_RTH_TRADE:
+                state.last = price;
+                break;
+            case MARK_PRICE:
+                state.mark = price;
+                break;
+            default:
+                return;
+            }
+            state.updated_epoch_seconds = current_epoch_seconds();
+            publish(false);
+            return;
+        }
         const auto found = market_requests_.find(request_id);
-        if (found == market_requests_.end() || !std::isfinite(price) || price <= 0.0) {
+        if (found == market_requests_.end()) {
             return;
         }
         auto& state = found->second;
@@ -340,9 +408,25 @@ public:
         }
     }
 
+    void marketDataType(int request_id, int market_data_type) override
+    {
+        const auto parsed = feed_type(market_data_type);
+        if (const auto quote = quote_requests_.find(request_id);
+            quote != quote_requests_.end()) {
+            quote->second.feed_type = parsed;
+            publish(true);
+            return;
+        }
+        if (const auto position = market_requests_.find(request_id);
+            position != market_requests_.end()) {
+            position->second.feed_type = parsed;
+            publish(true);
+        }
+    }
+
     void error(
         int request_id,
-        std::time_t,
+        IbkrErrorTime,
         int error_code,
         const std::string& error_text,
         const std::string&
@@ -354,7 +438,18 @@ public:
             std::clog << message.str() << '\n';
             return;
         }
+        if (is_pacing_or_rate_limit_error(error_code, error_text)) {
+            std::cerr << message.str() << " (reconnecting and retrying)\n";
+            fail(message.str());
+            return;
+        }
+        if (is_market_data_capacity_error(error_code)) {
+            std::cerr << message.str()
+                      << " (IBKR market-data-line capacity exhausted)\n";
+            return;
+        }
         if (request_to_tracker_.contains(request_id)
+            || quote_requests_.contains(request_id)
             || market_requests_.contains(request_id)) {
             std::clog << message.str() << " (optional live stream unavailable)\n";
             return;
@@ -394,14 +489,56 @@ private:
 
     struct PositionMarketState {
         PositionIdentity identity;
+        domain::MarketDataFeedType feed_type{domain::MarketDataFeedType::unknown};
         std::optional<double> bid;
         std::optional<double> ask;
         std::optional<double> last;
         std::optional<double> mark;
     };
 
+    struct QuoteState {
+        std::string symbol;
+        std::int64_t updated_epoch_seconds{};
+        domain::MarketDataFeedType feed_type{domain::MarketDataFeedType::unknown};
+        std::optional<double> bid;
+        std::optional<double> ask;
+        std::optional<double> last;
+        std::optional<double> mark;
+
+        [[nodiscard]] std::optional<double> selected_price() const
+        {
+            if (mark.has_value()) {
+                return mark;
+            }
+            if (last.has_value()) {
+                return last;
+            }
+            if (bid.has_value() && ask.has_value()) {
+                return (*bid + *ask) / 2.0;
+            }
+            return bid.has_value() ? bid : ask;
+        }
+    };
+
+    [[nodiscard]] static domain::MarketDataFeedType feed_type(int value)
+    {
+        switch (value) {
+        case 1:
+            return domain::MarketDataFeedType::live;
+        case 2:
+            return domain::MarketDataFeedType::frozen;
+        case 3:
+            return domain::MarketDataFeedType::delayed;
+        case 4:
+            return domain::MarketDataFeedType::delayed_frozen;
+        default:
+            return domain::MarketDataFeedType::unknown;
+        }
+    }
+
     void prepare(
         const std::vector<config::HistoricalDataSettings>& order_flow_symbols,
+        const std::vector<config::HistoricalDataSettings>& market_data_symbols,
         const std::vector<std::string>& position_symbols,
         const std::function<void(domain::LiveTradeContext)>& on_update
     )
@@ -411,6 +548,9 @@ private:
         }
         if (order_flow_symbols.empty()) {
             throw std::invalid_argument("at least one live Order Flow symbol is required");
+        }
+        if (market_data_symbols.empty()) {
+            throw std::invalid_argument("at least one live quote symbol is required");
         }
         if (position_symbols.empty()) {
             throw std::invalid_argument("day-trade position symbol list cannot be empty");
@@ -431,10 +571,12 @@ private:
             }
             trackers_.emplace_back(
                 subscription.symbol,
-                live::LiveOrderFlowSettings{.regular_trading_hours_only = true}
+                live::LiveOrderFlowSettings{.regular_trading_hours_only = false}
             );
         }
         update_handler_ = on_update;
+        market_data_subscriptions_ = market_data_symbols;
+        quote_requests_.clear();
         allowed_position_symbols_.clear();
         allowed_position_symbols_.insert(
             position_symbols.begin(),
@@ -519,6 +661,20 @@ private:
         for (const auto& tracker : trackers_) {
             context.order_flow.push_back(tracker.snapshot(epoch_seconds));
         }
+        context.quotes.reserve(quote_requests_.size());
+        for (const auto& [request_id, quote] : quote_requests_) {
+            static_cast<void>(request_id);
+            context.quotes.push_back(domain::LiveQuoteSnapshot{
+                .symbol = quote.symbol,
+                .updated_epoch_seconds = quote.updated_epoch_seconds,
+                .feed_type = quote.feed_type,
+                .bid = quote.bid,
+                .ask = quote.ask,
+                .last = quote.last,
+                .mark = quote.mark,
+                .selected_price = quote.selected_price(),
+            });
+        }
         update_handler_(std::move(context));
     }
 
@@ -535,6 +691,10 @@ private:
                 for (const auto& [request_id, identity] : pnl_requests_) {
                     static_cast<void>(identity);
                     client_.cancelPnLSingle(request_id);
+                }
+                for (const auto& [request_id, quote] : quote_requests_) {
+                    static_cast<void>(quote);
+                    client_.cancelMktData(request_id);
                 }
                 for (const auto& [request_id, state] : market_requests_) {
                     static_cast<void>(state);
@@ -566,10 +726,12 @@ private:
     EClientSocket client_;
     std::unique_ptr<EReader> reader_;
     std::vector<config::HistoricalDataSettings> subscriptions_;
+    std::vector<config::HistoricalDataSettings> market_data_subscriptions_;
     std::vector<live::LiveOrderFlowTracker> trackers_;
     live::PositionTracker positions_;
     std::unordered_map<int, std::size_t> request_to_tracker_;
     std::unordered_map<int, PositionIdentity> pnl_requests_;
+    std::unordered_map<int, QuoteState> quote_requests_;
     std::unordered_map<std::string, int> position_to_pnl_request_;
     std::unordered_map<int, PositionMarketState> market_requests_;
     std::unordered_map<std::string, int> position_to_market_request_;
@@ -600,12 +762,19 @@ TwsLiveContextClient& TwsLiveContextClient::operator=(
 
 void TwsLiveContextClient::monitor(
     const std::vector<config::HistoricalDataSettings>& order_flow_symbols,
+    const std::vector<config::HistoricalDataSettings>& market_data_symbols,
     const std::vector<std::string>& position_symbols,
     const std::function<void(domain::LiveTradeContext)>& on_update,
     const std::function<bool()>& stop_requested
 )
 {
-    impl_->monitor(order_flow_symbols, position_symbols, on_update, stop_requested);
+    impl_->monitor(
+        order_flow_symbols,
+        market_data_symbols,
+        position_symbols,
+        on_update,
+        stop_requested
+    );
 }
 
 } // namespace daytrader::ibkr

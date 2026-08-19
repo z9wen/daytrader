@@ -15,7 +15,8 @@ namespace {
     bool require_flow
 )
 {
-    if (signal_entry != domain::LongEntryDecision::ready) {
+    if (signal_entry != domain::LongEntryDecision::ready
+        && signal_entry != domain::LongEntryDecision::watch) {
         return signal_entry;
     }
     if (!zone.has_value()) {
@@ -33,21 +34,23 @@ namespace {
     if (!require_flow) {
         return domain::LongEntryDecision::ready;
     }
-    if (!flow.has_value()
-        || flow->evidence_quality_percent
-            < order_flow_entry_minimum_quality_percent) {
+    if (!flow.has_value()) {
         return domain::LongEntryDecision::wait_for_flow;
     }
     switch (flow->pressure) {
     case domain::OrderFlowPressureState::buying_effective:
+    case domain::OrderFlowPressureState::selling_absorbed:
         return domain::LongEntryDecision::ready;
     case domain::OrderFlowPressureState::selling_effective:
         return domain::LongEntryDecision::avoid;
     case domain::OrderFlowPressureState::insufficient_data:
-    case domain::OrderFlowPressureState::balanced:
     case domain::OrderFlowPressureState::buying_absorbed:
-    case domain::OrderFlowPressureState::selling_absorbed:
         return domain::LongEntryDecision::wait_for_flow;
+    case domain::OrderFlowPressureState::balanced:
+        return !flow->directional_score.has_value()
+                || *flow->directional_score >= 0.0
+            ? domain::LongEntryDecision::ready
+            : domain::LongEntryDecision::wait_for_flow;
     }
     return domain::LongEntryDecision::wait_for_flow;
 }

@@ -9,7 +9,8 @@ namespace daytrader::analysis {
 inline constexpr std::size_t ema_period = 20;
 inline constexpr std::size_t atr_period = 14;
 inline constexpr std::size_t fast_atr_period = 5;
-// Three/six/twelve 5-minute bars represent 15/30/60-minute RS windows.
+// Retained for 5-minute trend warm-up sizing. RelativeStrengthAnalyzer itself
+// uses timestamps, so changing the source bar size cannot shorten its horizons.
 inline constexpr std::size_t relative_strength_lookback_15 = 3;
 inline constexpr std::size_t relative_strength_lookback_30 = 6;
 inline constexpr std::size_t relative_strength_lookback = 12;
@@ -17,7 +18,6 @@ inline constexpr std::size_t relative_strength_lookback = 12;
 inline constexpr double entry_zone_atr_half_width = 0.25;
 // Live execution confirmation and MFE giveback thresholds. Profit protection
 // activates only after a non-trivial peak return to avoid reacting to pennies.
-inline constexpr double order_flow_entry_minimum_quality_percent = 50.0;
 inline constexpr double profit_protection_minimum_peak_return_percent = 0.25;
 inline constexpr double profit_protect_giveback_percent = 20.0;
 inline constexpr double profit_trim_giveback_percent = 35.0;

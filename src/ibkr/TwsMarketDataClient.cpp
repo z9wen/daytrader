@@ -1,5 +1,7 @@
 #include "daytrader/ibkr/TwsMarketDataClient.hpp"
 
+#include "daytrader/ibkr/IbkrErrorClassifier.hpp"
+#include "daytrader/ibkr/IbkrApiCompatibility.hpp"
 #include "daytrader/market_data/CompletedBarSynchronizer.hpp"
 
 #include "Contract.h"
@@ -50,7 +52,7 @@ constexpr int first_historical_request_id = 1001;
 
 [[nodiscard]] std::optional<double> decimal_to_optional(Decimal value)
 {
-    if (value == UNSET_DECIMAL) {
+    if (is_unset_decimal(value)) {
         return std::nullopt;
     }
 
@@ -95,24 +97,19 @@ public:
     }
 
     [[nodiscard]] std::vector<domain::InstrumentBars> fetch(
-        const std::vector<config::HistoricalDataSettings>& requests
+        const std::vector<config::HistoricalDataSettings>& requests,
+        const std::function<bool()>& stop_requested
     )
     {
         prepare(requests, false);
         connect();
 
-        const auto deadline = std::chrono::steady_clock::now() + settings_.request_timeout;
-        while (!initial_data_complete_.load() && !failed_.load()
-               && std::chrono::steady_clock::now() < deadline) {
+        while (!(stop_requested && stop_requested())
+               && !initial_data_complete_.load() && !failed_.load()) {
             process_messages();
         }
 
-        const bool timed_out = !initial_data_complete_.load() && !failed_.load();
         shutdown();
-
-        if (timed_out) {
-            throw std::runtime_error("timed out waiting for IBKR historical data");
-        }
 
         const auto failure = failure_message();
         if (!failure.empty()) {
@@ -165,14 +162,7 @@ public:
         }
         connect();
 
-        const auto initial_deadline =
-            std::chrono::steady_clock::now() + settings_.request_timeout;
         while (!stop_requested() && !failed_.load()) {
-            if (!initial_data_complete_.load()
-                && std::chrono::steady_clock::now() >= initial_deadline) {
-                fail("timed out waiting for initial IBKR historical data");
-                break;
-            }
             process_messages();
         }
 
@@ -244,7 +234,7 @@ public:
 
     void error(
         int request_id,
-        std::time_t,
+        IbkrErrorTime,
         int error_code,
         const std::string& error_text,
         const std::string&
@@ -259,6 +249,12 @@ public:
 
         if (is_informational_message(error_code)) {
             std::clog << message.str() << '\n';
+            return;
+        }
+
+        if (is_pacing_or_rate_limit_error(error_code, error_text)) {
+            std::cerr << message.str() << " (caller will retry)\n";
+            fail(message.str());
             return;
         }
 
@@ -312,11 +308,6 @@ private:
         for (const auto& request : requests) {
             if (request.symbol.empty()) {
                 throw std::invalid_argument("historical-data symbols cannot be empty");
-            }
-            if (request.maximum_bars == 0) {
-                throw std::invalid_argument(
-                    "maximum historical bars must be positive for " + request.symbol
-                );
             }
             if (!symbols.insert(request.symbol).second) {
                 throw std::invalid_argument("duplicate historical-data symbol: " + request.symbol);
@@ -412,16 +403,6 @@ private:
         } else {
             bars.insert(found, std::move(converted));
         }
-
-        const auto maximum_bars = requests_[index].maximum_bars;
-        if (bars.size() > maximum_bars) {
-            bars.erase(
-                bars.begin(),
-                bars.begin() + static_cast<std::ptrdiff_t>(
-                    bars.size() - maximum_bars
-                )
-            );
-        }
     }
 
     void publish_completed_bar()
@@ -514,10 +495,11 @@ TwsMarketDataClient::TwsMarketDataClient(TwsMarketDataClient&&) noexcept = defau
 TwsMarketDataClient& TwsMarketDataClient::operator=(TwsMarketDataClient&&) noexcept = default;
 
 std::vector<domain::InstrumentBars> TwsMarketDataClient::fetch_historical_bars(
-    const std::vector<config::HistoricalDataSettings>& requests
+    const std::vector<config::HistoricalDataSettings>& requests,
+    const std::function<bool()>& stop_requested
 )
 {
-    return impl_->fetch(requests);
+    return impl_->fetch(requests, stop_requested);
 }
 
 void TwsMarketDataClient::monitor_historical_bars(

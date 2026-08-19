@@ -200,8 +200,8 @@ void bearish_market_selects_weakest_inverse_industry()
     );
     require(
         scan.rankings.back().leveraged_entry_zone->state
-            == daytrader::domain::EntryZoneState::trend_unconfirmed,
-        "weak long-leveraged ETF should be marked NO_TREND"
+            == daytrader::domain::EntryZoneState::below_zone,
+        "leveraged ETF price state should remain independent of the base trend"
     );
     require(scan.candidate.has_value(), "expected an inverse candidate");
     require(scan.candidate->trade_symbol == "SOXS", "expected SOXS candidate");

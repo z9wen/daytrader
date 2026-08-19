@@ -124,10 +124,9 @@ namespace {
     const std::optional<domain::EntryZone>& zone
 )
 {
-    if (phase == domain::BullishPhase::building) {
-        return domain::LongEntryDecision::watch;
-    }
-    if (phase != domain::BullishPhase::strong || !zone.has_value()) {
+    if ((phase != domain::BullishPhase::strong
+         && phase != domain::BullishPhase::building)
+        || !zone.has_value()) {
         return domain::LongEntryDecision::avoid;
     }
 
@@ -140,8 +139,11 @@ namespace {
     case domain::EntryZoneState::extended:
         return domain::LongEntryDecision::wait_for_vwap;
     case domain::EntryZoneState::below_zone:
+        return phase == domain::BullishPhase::building
+            ? domain::LongEntryDecision::watch
+            : domain::LongEntryDecision::avoid;
     case domain::EntryZoneState::trend_unconfirmed:
-        return domain::LongEntryDecision::avoid;
+        return domain::LongEntryDecision::watch;
     }
     return domain::LongEntryDecision::avoid;
 }

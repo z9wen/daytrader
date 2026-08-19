@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <chrono>
 #include <string>
 
@@ -11,7 +10,6 @@ struct IbkrConnectionSettings {
     std::string host{"127.0.0.1"};
     int port{9972};
     int client_id{7};
-    std::chrono::seconds request_timeout{30};
 };
 
 // Describes one reqHistoricalData subscription, including its IB contract identity.
@@ -22,14 +20,12 @@ struct HistoricalDataSettings {
     std::string primary_exchange;
     std::string currency{"USD"};
     std::string duration{"2 D"};
-    std::string bar_size{"5 mins"};
+    std::string bar_size{"1 min"};
     std::string data_type{"TRADES"};
-    bool regular_trading_hours_only{true};
+    bool regular_trading_hours_only{false};
     std::chrono::minutes end_delay{0};
     // Optional requests, such as VIX, may fail without stopping the ETF monitor.
     bool required{true};
-    // Monitoring needs only recent context; research requests may opt into a larger history.
-    std::size_t maximum_bars{2'048};
 };
 
 } // namespace daytrader::config

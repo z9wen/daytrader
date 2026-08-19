@@ -146,6 +146,11 @@ void require(bool condition, const std::string& message)
                 .pressure = daytrader::domain::OrderFlowPressureState::buying_effective,
             },
         }},
+        .quotes = {daytrader::domain::LiveQuoteSnapshot{
+            .symbol = "SOXL",
+            .feed_type = daytrader::domain::MarketDataFeedType::live,
+            .selected_price = 52.0,
+        }},
     };
     scan.live_context.order_flow[0].thirty_seconds.flow.delta_ratio_percent = 40.0;
     scan.live_context.order_flow[0].one_minute.flow.delta_ratio_percent = 28.0;
@@ -172,6 +177,8 @@ void renders_independent_tabs_and_column_order()
     require(contains(trade, "LIVE TRADE CONTEXT"), "trade tab should show live context");
     require(contains(trade, "SOXL"), "trade tab should show open positions");
     require(contains(trade, "BUY_EFFECTIVE"), "trade tab should show flow pressure");
+    require(contains(trade, "LIVE=1"),
+            "trade tab should display IBKR's actual market-data callback mode");
     require(contains(trade, "TRIM"),
             "trade tab should show MFE-aware position guidance");
     require(!contains(trade, "SECTOR ROTATION"), "trade tab should remain independent");
