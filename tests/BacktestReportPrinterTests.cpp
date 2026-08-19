@@ -57,6 +57,10 @@ void explains_the_revised_backtest_scope()
             "report should expose entry-time outcomes separately");
     require(contains(rendered, "PRIMARY 1 (100.0% win, 0.960% avg)"),
             "report should separate the normal first trade from re-entry");
+    require(contains(rendered, "entry P30:"),
+            "report should expose entry follow-through and false breakouts");
+    require(contains(rendered, "exit 15m:"),
+            "report should expose post-exit continuation diagnostics");
 }
 
 } // namespace

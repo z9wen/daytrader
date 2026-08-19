@@ -1,6 +1,8 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
+#include <optional>
 #include <string>
 
 namespace daytrader::config {
@@ -24,6 +26,9 @@ struct HistoricalDataSettings {
     std::string data_type{"TRADES"};
     bool regular_trading_hours_only{false};
     std::chrono::minutes end_delay{0};
+    // An exact UTC endpoint is used by durable daily backfills. When absent,
+    // end_delay retains the relative-time behavior used by live refreshes.
+    std::optional<std::int64_t> end_timestamp;
     // Optional requests, such as VIX, may fail without stopping the ETF monitor.
     bool required{true};
 };

@@ -47,7 +47,9 @@ bool is_connection_interruption_error(std::string_view message)
     return normalized.find("couldn't connect") != std::string::npos
         || normalized.find("unable to connect") != std::string::npos
         || normalized.find("connection closed") != std::string::npos
-        || normalized.find("not connected") != std::string::npos;
+        || normalized.find("not connected") != std::string::npos
+        || normalized.find("server disconnect occurred") != std::string::npos
+        || normalized.find("attempting reconnection") != std::string::npos;
 }
 
 } // namespace daytrader::ibkr

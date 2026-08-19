@@ -23,4 +23,6 @@ void sort_and_deduplicate_bars(
     std::vector<domain::InstrumentBars>& instruments
 );
 
+void sort_and_deduplicate_bars(domain::InstrumentBars& instrument);
+
 } // namespace daytrader::market_data

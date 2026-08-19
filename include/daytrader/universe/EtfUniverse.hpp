@@ -21,6 +21,13 @@ namespace daytrader::universe {
     std::span<const EtfDefinition> etfs
 );
 
+// Returns every stock/ETF used by the monitor, including long-leveraged
+// execution instruments. Indexes such as VIX and reference-only inverse ETFs
+// are intentionally excluded from the bulk ETF history cache.
+[[nodiscard]] std::vector<config::HistoricalDataSettings> cacheable_etf_requests(
+    std::span<const EtfDefinition> etfs
+);
+
 // Symbols that must share a completed bar before publishing a new scan.
 [[nodiscard]] std::vector<std::string> signal_symbols(
     std::span<const EtfDefinition> etfs

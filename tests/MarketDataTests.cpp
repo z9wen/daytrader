@@ -202,6 +202,16 @@ void plans_one_minute_history_at_the_official_duration_boundary()
             "the oldest partial request window is incorrect");
     require(longer[1].duration_days == 365 && longer[1].end_delay_days == 0,
             "the newest request must use the documented full duration");
+
+    const auto durable = daytrader::ibkr::plan_one_minute_day_windows(75, 30);
+    require(durable.size() == 3,
+            "a durable request plan should preserve the complete range");
+    require(durable[0].duration_days == 15 && durable[0].end_delay_days == 60,
+            "the oldest durable window should contain the remainder");
+    require(durable[1].duration_days == 30 && durable[1].end_delay_days == 30,
+            "the middle durable window should remain contiguous");
+    require(durable[2].duration_days == 30 && durable[2].end_delay_days == 0,
+            "the newest durable window should end at the present");
 }
 
 void recognizes_connection_interruptions_without_hiding_request_errors()
@@ -217,6 +227,12 @@ void recognizes_connection_interruptions_without_hiding_request_errors()
             "IBKR connection closed while fetching historical data"
         ),
         "an interrupted backfill should be resumed"
+    );
+    require(
+        daytrader::ibkr::is_connection_interruption_error(
+            "HMDS server disconnect occurred. Attempting reconnection..."
+        ),
+        "an explicit historical-data farm interruption should be retried"
     );
     require(
         !daytrader::ibkr::is_connection_interruption_error(

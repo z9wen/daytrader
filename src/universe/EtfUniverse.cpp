@@ -144,6 +144,17 @@ std::vector<config::HistoricalDataSettings> monitoring_data_requests(
     return requests;
 }
 
+std::vector<config::HistoricalDataSettings> cacheable_etf_requests(
+    std::span<const EtfDefinition> etfs
+)
+{
+    auto monitoring = monitoring_data_requests(etfs);
+    std::erase_if(monitoring, [](const config::HistoricalDataSettings& request) {
+        return request.security_type != "STK";
+    });
+    return monitoring;
+}
+
 std::vector<std::string> signal_symbols(std::span<const EtfDefinition> etfs)
 {
     std::vector<std::string> symbols;

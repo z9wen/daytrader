@@ -12,6 +12,15 @@
 
 namespace daytrader::backtest {
 
+enum class TradeLifecycleMode {
+    // Existing responsive behavior: every fresh READY transition may enter,
+    // and short-lived neutral readings can tighten or close the position.
+    responsive,
+    // One entry per BUILDING -> STRONG cycle. Hold ordinary neutral pullbacks;
+    // exit only on confirmed five-minute deterioration or a clear weak trend.
+    trend_cycle,
+};
+
 // Parameters for one signal-ETF -> leveraged-ETF intraday strategy. Historical
 // bars cannot reproduce live Order Flow, so this engine evaluates the bar-based
 // setup and the leveraged ETF's own VWAP/ATR execution state.
@@ -22,6 +31,7 @@ struct DayTradeBacktestSettings {
     std::string time_zone{"America/New_York"};
     std::chrono::seconds source_bar_interval{std::chrono::minutes{5}};
     std::chrono::seconds trend_bar_interval{std::chrono::minutes{5}};
+    TradeLifecycleMode lifecycle_mode{TradeLifecycleMode::responsive};
     // Optional research filters. By default every bar supplied by IBKR,
     // including premarket and after-hours, may produce an entry. Positions are
     // still closed when the New York trading date changes.

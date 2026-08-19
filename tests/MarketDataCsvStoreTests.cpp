@@ -65,6 +65,14 @@ void csv_round_trip_preserves_optional_ibkr_fields()
         "newly written cache should be recent"
     );
 
+    store.mark_session_complete("SOXX", "2026-08-18");
+    store.mark_session_complete("SOXX", "2026-08-18");
+    store.mark_session_complete("QQQ", "2026-08-18");
+    const auto completed = store.load_completed_sessions();
+    require(completed.at("SOXX").size() == 1, "completion rows should be idempotent");
+    require(completed.at("SOXX").contains("2026-08-18"), "SOXX day should be complete");
+    require(completed.at("QQQ").contains("2026-08-18"), "QQQ day should be complete");
+
     std::filesystem::remove_all(directory);
 }
 

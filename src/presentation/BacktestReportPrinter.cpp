@@ -95,7 +95,9 @@ std::string BacktestReportPrinter::render(
            << "All cached IBKR sessions are eligible, including premarket and "
               "after-hours; no daily trade-count cap; 2 bps cost per side.\n"
            << "Order Flow is NOT replayed because full-session historical ticks "
-              "are not cached.\n\n";
+              "are not cached.\n"
+           << "Entry diagnostic: +0.75 ATR vs -0.40 ATR first within 30m; "
+              "exit diagnostic: +/-0.50 ATR first within 15m.\n\n";
     output << std::left << std::setw(21) << "strategy"
            << std::right << std::setw(10) << "sessions"
            << std::setw(9) << "trades"
@@ -131,6 +133,53 @@ std::string BacktestReportPrinter::render(
                << " | avg win " << std::setprecision(3) << report.average_win_percent
                << "% | avg loss " << report.average_loss_percent
                << "% | avg MFE " << report.average_mfe_percent << "%\n";
+        output << "  entry P30: follow " << report.entry_follow_throughs
+               << " | false breakout " << report.false_breakouts
+               << " | no follow " << report.no_follow_throughs
+               << " | ambiguous " << report.ambiguous_entries
+               << " | success " << std::setprecision(1)
+               << report.entry_follow_through_rate_percent
+               << "% | false-breakout " << report.false_breakout_rate_percent
+               << "%\n";
+        output << "  exit 15m: protected " << report.protected_exits
+               << " | premature " << report.premature_exits
+               << " | neutral " << report.neutral_exits
+               << " | ambiguous " << report.ambiguous_exits
+               << " | timing accuracy " << report.exit_timing_accuracy_percent
+               << "% | premature " << report.premature_exit_rate_percent
+               << "% | avg profit capture " << report.average_profit_capture_percent
+               << "%\n";
+        double entry_offset_sum{};
+        double zone_width_sum{};
+        double adverse_sum{};
+        double realized_giveback_sum{};
+        std::size_t price_samples{};
+        for (const auto& trade : report.trade_log) {
+            if (trade.entry_vwap <= 0.0 || trade.entry_price <= 0.0) {
+                continue;
+            }
+            entry_offset_sum += (trade.entry_price / trade.entry_vwap - 1.0) * 100.0;
+            zone_width_sum += (trade.suggested_entry_upper
+                - trade.suggested_entry_lower) / trade.entry_vwap * 100.0;
+            adverse_sum += trade.maximum_adverse_excursion_percent;
+            realized_giveback_sum += std::max(
+                0.0,
+                trade.maximum_favorable_excursion_percent
+                    - trade.gross_return_percent
+            );
+            ++price_samples;
+        }
+        if (price_samples > 0) {
+            output << "  price sensitivity: buy-vs-VWAP " << std::setprecision(3)
+                   << entry_offset_sum / static_cast<double>(price_samples)
+                   << "% | avg zone width "
+                   << zone_width_sum / static_cast<double>(price_samples)
+                   << "% | avg MAE "
+                   << adverse_sum / static_cast<double>(price_samples)
+                   << "% | MFE giveback "
+                   << realized_giveback_sum / static_cast<double>(price_samples)
+                   << "%\n";
+        }
     }
 
     const time::TimeZoneFormatter formatter{time_zone_};
@@ -214,6 +263,18 @@ std::string BacktestReportPrinter::render(
                    << std::setw(10) << trade.exit_price
                    << std::setw(10) << std::setprecision(3) << trade.net_return_percent
                    << std::setw(18) << backtest::to_string(trade.exit_reason) << '\n';
+            output << "    suggested " << std::fixed << std::setprecision(2)
+                   << trade.suggested_entry_lower << '-' << trade.suggested_entry_upper
+                   << " | VWAP " << trade.entry_vwap
+                   << " | MFE " << std::setprecision(3)
+                   << trade.maximum_favorable_excursion_percent << "% | MAE "
+                   << trade.maximum_adverse_excursion_percent << "% | capture ";
+            if (trade.profit_capture_percent.has_value()) {
+                output << *trade.profit_capture_percent << '%';
+            } else {
+                output << '-';
+            }
+            output << '\n';
         }
     }
 

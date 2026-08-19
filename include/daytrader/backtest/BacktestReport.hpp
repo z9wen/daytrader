@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,26 @@ enum class ExitReason {
     data_end,
 };
 
+// Thirty-minute behavior after an entry. Thresholds are evaluated in time
+// order so an adverse-first false breakout is distinct from a quiet timeout.
+enum class EntryFollowThroughOutcome {
+    insufficient_data,
+    follow_through,
+    false_breakout,
+    no_follow_through,
+    ambiguous,
+};
+
+// Fifteen-minute behavior after an exit. For a long position, downside first
+// means the exit protected capital; upside first indicates missed continuation.
+enum class ExitTimingOutcome {
+    insufficient_data,
+    protected_capital,
+    premature,
+    neutral,
+    ambiguous,
+};
+
 struct TradeRecord {
     std::string session_date;
     domain::MarketRegime market_regime_at_entry{domain::MarketRegime::neutral};
@@ -28,6 +49,9 @@ struct TradeRecord {
     double signal_entry_price{};
     double entry_price{};
     double exit_price{};
+    double suggested_entry_lower{};
+    double suggested_entry_upper{};
+    double entry_vwap{};
     double signal_atr_at_entry{};
     double trade_atr_at_entry{};
     double signal_atr_percent_at_entry{};
@@ -39,6 +63,11 @@ struct TradeRecord {
     double maximum_favorable_excursion_percent{};
     double maximum_adverse_excursion_percent{};
     ExitReason exit_reason{ExitReason::data_end};
+    EntryFollowThroughOutcome entry_follow_through{
+        EntryFollowThroughOutcome::insufficient_data
+    };
+    ExitTimingOutcome exit_timing{ExitTimingOutcome::insufficient_data};
+    std::optional<double> profit_capture_percent;
 };
 
 struct BacktestReport {
@@ -62,6 +91,21 @@ struct BacktestReport {
     double maximum_drawdown_percent{};
     double average_holding_minutes{};
     double average_mfe_percent{};
+    std::size_t entry_outcome_samples{};
+    std::size_t entry_follow_throughs{};
+    std::size_t false_breakouts{};
+    std::size_t no_follow_throughs{};
+    std::size_t ambiguous_entries{};
+    double entry_follow_through_rate_percent{};
+    double false_breakout_rate_percent{};
+    std::size_t directional_exit_samples{};
+    std::size_t protected_exits{};
+    std::size_t premature_exits{};
+    std::size_t neutral_exits{};
+    std::size_t ambiguous_exits{};
+    double exit_timing_accuracy_percent{};
+    double premature_exit_rate_percent{};
+    double average_profit_capture_percent{};
     std::vector<TradeRecord> trade_log;
 };
 

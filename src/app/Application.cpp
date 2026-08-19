@@ -8,13 +8,18 @@
 #include "daytrader/presentation/OrderFlowBacktestPrinter.hpp"
 #include "daytrader/runtime/ShutdownSignal.hpp"
 #include "daytrader/time/TimeZoneFormatter.hpp"
+#include "daytrader/universe/EtfUniverse.hpp"
 
+#include <array>
 #include <charconv>
 #include <chrono>
 #include <exception>
 #include <iostream>
+#include <string>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_set>
+#include <vector>
 
 namespace {
 
@@ -56,11 +61,44 @@ namespace {
     return value;
 }
 
+[[nodiscard]] std::vector<std::string> all_cache_symbols(
+    const daytrader::config::AppConfig& config
+)
+{
+    const auto requests = daytrader::universe::cacheable_etf_requests(config.etfs);
+    std::vector<std::string> symbols;
+    symbols.reserve(requests.size());
+    std::unordered_set<std::string> seen;
+    const auto append = [&](std::string_view symbol) {
+        const auto found = std::ranges::find(
+            requests,
+            symbol,
+            &daytrader::config::HistoricalDataSettings::symbol
+        );
+        if (found != requests.end() && seen.insert(found->symbol).second) {
+            symbols.push_back(found->symbol);
+        }
+    };
+
+    // Finish the two primary signal ETFs and their execution instruments first.
+    constexpr std::array priorities{"QQQ", "TQQQ", "SPY", "SOXX", "SOXL"};
+    for (const auto* symbol : priorities) {
+        append(symbol);
+    }
+    for (const auto& request : requests) {
+        append(request.symbol);
+    }
+    return symbols;
+}
+
 void print_usage()
 {
     std::cout << "Usage:\n"
               << "  daytrader                 continuous live monitor\n"
+              << "  daytrader cache-history [days|ytd] [all|SYMBOL...] cache 1-minute data\n"
               << "  daytrader backtest [days|ytd] fetch complete IBKR 1-minute data (default 240)\n"
+              << "  daytrader backtest-qqq [days|ytd] use only local QQQ/TQQQ/SPY data\n"
+              << "  daytrader backtest-core [days|ytd] use only local core-five ETF data\n"
               << "  daytrader orderflow-backtest [days|ytd] test SOXX tick flow (default 30)\n";
 }
 
@@ -77,6 +115,69 @@ int Application::run(int argc, char* argv[]) const
             const std::string_view command{argv[1]};
             if (command == "--help" || command == "-h") {
                 print_usage();
+                return 0;
+            }
+            if (command == "cache-history") {
+                if (argc < 4) {
+                    print_usage();
+                    return 2;
+                }
+                const int days = parse_backtest_days(argv[2], config.time_zone);
+                std::vector<std::string> symbols;
+                if (argc == 4
+                    && (std::string_view{argv[3]} == "all"
+                        || std::string_view{argv[3]} == "ALL")) {
+                    symbols = all_cache_symbols(config);
+                    std::clog << "Caching all " << symbols.size()
+                              << " monitored long-side ETFs\n";
+                } else {
+                    symbols.reserve(static_cast<std::size_t>(argc - 3));
+                    std::unordered_set<std::string> seen;
+                    for (int index = 3; index < argc; ++index) {
+                        if (seen.insert(argv[index]).second) {
+                            symbols.emplace_back(argv[index]);
+                        }
+                    }
+                }
+                backtest::IbkrBacktestRunner{}.cache_history(
+                    config,
+                    days,
+                    symbols
+                );
+                return 0;
+            }
+            if (command == "backtest-qqq") {
+                if (argc > 3) {
+                    print_usage();
+                    return 2;
+                }
+                const int days = argc == 3
+                    ? parse_backtest_days(argv[2], config.time_zone)
+                    : 240;
+                const auto reports = backtest::IbkrBacktestRunner{}.run_cached_qqq(
+                    config,
+                    days
+                );
+                std::cout << presentation::BacktestReportPrinter{config.time_zone}.render(
+                    reports
+                );
+                return 0;
+            }
+            if (command == "backtest-core") {
+                if (argc > 3) {
+                    print_usage();
+                    return 2;
+                }
+                const int days = argc == 3
+                    ? parse_backtest_days(argv[2], config.time_zone)
+                    : 240;
+                const auto reports = backtest::IbkrBacktestRunner{}.run_cached_core(
+                    config,
+                    days
+                );
+                std::cout << presentation::BacktestReportPrinter{config.time_zone}.render(
+                    reports
+                );
                 return 0;
             }
             if ((command != "backtest" && command != "orderflow-backtest")

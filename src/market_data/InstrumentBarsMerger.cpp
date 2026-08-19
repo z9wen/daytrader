@@ -58,14 +58,19 @@ void sort_and_deduplicate_bars(
 )
 {
     for (auto& instrument : instruments) {
-        std::ranges::sort(instrument.bars, {}, &domain::MarketBar::epoch_seconds);
-        const auto duplicate = std::ranges::unique(
-            instrument.bars,
-            {},
-            &domain::MarketBar::epoch_seconds
-        );
-        instrument.bars.erase(duplicate.begin(), duplicate.end());
+        sort_and_deduplicate_bars(instrument);
     }
+}
+
+void sort_and_deduplicate_bars(domain::InstrumentBars& instrument)
+{
+    std::ranges::sort(instrument.bars, {}, &domain::MarketBar::epoch_seconds);
+    const auto duplicate = std::ranges::unique(
+        instrument.bars,
+        {},
+        &domain::MarketBar::epoch_seconds
+    );
+    instrument.bars.erase(duplicate.begin(), duplicate.end());
 }
 
 } // namespace daytrader::market_data

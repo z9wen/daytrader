@@ -93,6 +93,18 @@ void default_universe_is_complete_and_self_contained()
     require(!monitoring_symbols.contains("DRIP"), "DRIP must remain reference-only");
     require(!monitoring_symbols.contains("SPXL"), "SPXL is not used by a displayed entry zone");
 
+    const auto cacheable = daytrader::universe::cacheable_etf_requests(etfs);
+    require(cacheable.size() == 42, "expected every monitored ETF except VIX");
+    std::unordered_set<std::string> cacheable_symbols;
+    for (const auto& request : cacheable) {
+        require(request.security_type == "STK", "bulk cache should contain only ETFs");
+        cacheable_symbols.insert(request.symbol);
+    }
+    require(!cacheable_symbols.contains("VIX"), "VIX must use a separate index cache");
+    require(cacheable_symbols.contains("SOXL"), "SOXL should be bulk-cacheable");
+    require(cacheable_symbols.contains("TQQQ"), "TQQQ should be bulk-cacheable");
+    require(!cacheable_symbols.contains("SOXS"), "inverse ETFs remain reference-only");
+
     const auto position_symbols = daytrader::universe::day_trade_position_symbols(etfs);
     const std::unordered_set<std::string> position_set{
         position_symbols.begin(),

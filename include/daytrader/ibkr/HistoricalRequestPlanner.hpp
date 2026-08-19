@@ -16,6 +16,9 @@ struct HistoricalDayWindow {
 inline constexpr int one_minute_max_duration_days = 365;
 
 [[nodiscard]] std::vector<HistoricalDayWindow>
-plan_one_minute_day_windows(int calendar_days);
+plan_one_minute_day_windows(
+    int calendar_days,
+    int window_days = one_minute_max_duration_days
+);
 
 } // namespace daytrader::ibkr

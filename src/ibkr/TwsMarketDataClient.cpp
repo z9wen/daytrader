@@ -60,14 +60,9 @@ constexpr int first_historical_request_id = 1001;
     return converted < 0.0 ? std::nullopt : std::optional<double>{converted};
 }
 
-[[nodiscard]] std::string historical_end_time(std::chrono::minutes delay)
+[[nodiscard]] std::string format_historical_end_time(std::int64_t epoch_seconds)
 {
-    if (delay == std::chrono::minutes::zero()) {
-        return {};
-    }
-
-    const auto end = std::chrono::system_clock::now() - delay;
-    const std::time_t timestamp = std::chrono::system_clock::to_time_t(end);
+    const std::time_t timestamp = static_cast<std::time_t>(epoch_seconds);
     std::tm utc{};
     if (gmtime_r(&timestamp, &utc) == nullptr) {
         throw std::runtime_error("unable to calculate historical-data end time");
@@ -78,6 +73,24 @@ constexpr int first_historical_request_id = 1001;
         throw std::runtime_error("unable to format historical-data end time");
     }
     return output.data();
+}
+
+[[nodiscard]] std::string historical_end_time(
+    const config::HistoricalDataSettings& request
+)
+{
+    if (request.end_timestamp.has_value()) {
+        return format_historical_end_time(*request.end_timestamp);
+    }
+    if (request.end_delay == std::chrono::minutes::zero()) {
+        return {};
+    }
+    const auto end = std::chrono::system_clock::now() - request.end_delay;
+    return format_historical_end_time(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            end.time_since_epoch()
+        ).count()
+    );
 }
 
 } // namespace
@@ -141,7 +154,8 @@ public:
         }
 
         for (const auto& request : requests) {
-            if (request.end_delay != std::chrono::minutes::zero()) {
+            if (request.end_delay != std::chrono::minutes::zero()
+                || request.end_timestamp.has_value()) {
                 throw std::invalid_argument(
                     "continuous historical data requires a zero end delay"
                 );
@@ -193,7 +207,7 @@ public:
             client_.reqHistoricalData(
                 first_historical_request_id + static_cast<int>(index),
                 contract,
-                keep_up_to_date_ ? std::string{} : historical_end_time(request.end_delay),
+                keep_up_to_date_ ? std::string{} : historical_end_time(request),
                 request.duration,
                 request.bar_size,
                 request.data_type,
