@@ -26,7 +26,8 @@ enum class MarketTrendSignal {
     weak,
 };
 
-// Describes the most recent interaction with the current regular-session VWAP.
+// Describes the most recent interaction with the active session VWAP. RTH is
+// active from 09:30-16:00 New York; the independent EXT anchor is active outside.
 // RECLAIM and LOST are transitions; RISING is the healthier long continuation.
 enum class VwapStructureState {
     unavailable,
@@ -87,12 +88,14 @@ enum class EntryZoneState {
     trend_unconfirmed,
 };
 
-// Instrument-specific reference band: session VWAP +/- 0.25 * ATR14.
+// Instrument-specific reference band: active VWAP +/- 0.25 * ATR14.
 struct EntryZone {
     std::string symbol;
     double lower_price{};
     double upper_price{};
     double current_price{};
+    std::optional<double> extended_vwap;
+    std::optional<double> regular_vwap;
     double session_vwap{};
     double atr14{};
     double atr5{};
@@ -106,6 +109,9 @@ struct EtfSnapshot {
     std::string symbol;
     double close{};
     std::optional<double> live_price;
+    std::optional<double> extended_vwap;
+    std::optional<double> regular_vwap;
+    // Active reference: RTH during 09:30-16:00, EXT outside that window.
     std::optional<double> session_vwap;
     double ema20{};
     double ema20_change_percent{};
@@ -135,6 +141,8 @@ struct RankedEtf {
     std::size_t aligned_bar_count{};
     double close{};
     std::optional<double> live_price;
+    std::optional<double> extended_vwap;
+    std::optional<double> regular_vwap;
     std::optional<double> session_vwap;
     double ema20{};
     double ema20_change_percent{};
@@ -170,6 +178,7 @@ struct MarketScan {
     std::optional<EtfSnapshot> tqqq;
     std::optional<EntryZone> tqqq_entry_zone;
     std::optional<LeveragedExecutionDecision> tqqq_execution;
+    std::optional<SetupProbabilityEstimate> qqq_building_probability;
     std::optional<VolatilitySnapshot> vix;
     MarketRegime market_regime{MarketRegime::neutral};
     std::vector<RankedEtf> sector_rankings;

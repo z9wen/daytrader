@@ -12,12 +12,17 @@ namespace {
     double signal_atr
 )
 {
-    if (!window.flow.first_trade_price.has_value()
-        || !window.flow.last_trade_price.has_value()) {
-        return std::nullopt;
+    if (window.flow.first_trade_price.has_value()
+        && window.flow.last_trade_price.has_value()) {
+        return (*window.flow.last_trade_price - *window.flow.first_trade_price)
+            / signal_atr;
     }
-    return (*window.flow.last_trade_price - *window.flow.first_trade_price)
-        / signal_atr;
+    if (window.flow.first_midpoint_price.has_value()
+        && window.flow.last_midpoint_price.has_value()) {
+        return (*window.flow.last_midpoint_price - *window.flow.first_midpoint_price)
+            / signal_atr;
+    }
+    return std::nullopt;
 }
 
 } // namespace
@@ -28,6 +33,10 @@ OrderFlowSignalAnalyzer::OrderFlowSignalAnalyzer(OrderFlowSignalSettings setting
     if (settings_.balanced_delta_ratio_percent < 0.0
         || settings_.balanced_delta_ratio_percent >= 100.0) {
         throw std::invalid_argument("balanced DeltaRatio threshold must be in [0, 100)");
+    }
+    if (!std::isfinite(settings_.microprice_full_scale_basis_points)
+        || settings_.microprice_full_scale_basis_points <= 0.0) {
+        throw std::invalid_argument("microprice full scale must be positive");
     }
     if (settings_.full_depth_trade_count == 0) {
         throw std::invalid_argument("Order Flow depth target must be positive");
@@ -109,30 +118,65 @@ domain::OrderFlowAssessment OrderFlowSignalAnalyzer::analyze(
             *thirty_seconds.flow.delta_ratio_percent
             - *one_minute.flow.delta_ratio_percent;
     }
+    if (thirty_seconds.flow.level1_ofi_ratio_percent.has_value()
+        && one_minute.flow.level1_ofi_ratio_percent.has_value()) {
+        result.ofi_acceleration_points =
+            *thirty_seconds.flow.level1_ofi_ratio_percent
+            - *one_minute.flow.level1_ofi_ratio_percent;
+    }
+    if (thirty_seconds.flow.delta_ratio_percent.has_value()
+        && thirty_seconds.flow.level1_ofi_ratio_percent.has_value()) {
+        result.combined_pressure_percent = std::clamp(
+            0.60 * *thirty_seconds.flow.delta_ratio_percent
+                + 0.40 * *thirty_seconds.flow.level1_ofi_ratio_percent,
+            -100.0,
+            100.0
+        );
+    } else if (thirty_seconds.flow.delta_ratio_percent.has_value()) {
+        result.combined_pressure_percent =
+            thirty_seconds.flow.delta_ratio_percent;
+    } else {
+        result.combined_pressure_percent =
+            thirty_seconds.flow.level1_ofi_ratio_percent;
+    }
     result.thirty_second_price_atr = price_response_atr(thirty_seconds, signal_atr);
     result.one_minute_price_atr = price_response_atr(one_minute, signal_atr);
 
-    if (thirty_seconds.flow.delta_ratio_percent.has_value()
-        && one_minute.flow.delta_ratio_percent.has_value()
+    if (result.combined_pressure_percent.has_value()
         && result.thirty_second_price_atr.has_value()) {
-        const double delta_30 =
-            *thirty_seconds.flow.delta_ratio_percent / 100.0;
-        const double delta_60 =
-            *one_minute.flow.delta_ratio_percent / 100.0;
+        const double delta_30 = thirty_seconds.flow.delta_ratio_percent.value_or(0.0)
+            / 100.0;
+        const double delta_60 = one_minute.flow.delta_ratio_percent.value_or(0.0)
+            / 100.0;
+        const double ofi_30 = thirty_seconds.flow.level1_ofi_ratio_percent.value_or(0.0)
+            / 100.0;
+        const double ofi_60 = one_minute.flow.level1_ofi_ratio_percent.value_or(0.0)
+            / 100.0;
         const double acceleration = std::clamp(delta_30 - delta_60, -1.0, 1.0);
+        const double ofi_acceleration = std::clamp(ofi_30 - ofi_60, -1.0, 1.0);
         const double response = std::clamp(
             *result.thirty_second_price_atr
                 / settings_.price_response_full_scale_atr,
             -1.0,
             1.0
         );
+        const double microprice = std::clamp(
+            thirty_seconds.flow.microprice_skew_basis_points.value_or(0.0)
+                / settings_.microprice_full_scale_basis_points,
+            -1.0,
+            1.0
+        );
         // The fixed weights keep each ingredient visible and bounded. Quality
         // shrinks weak tick samples toward zero instead of changing direction.
         const double raw_score = 100.0 * (
-            0.40 * delta_30
-            + 0.25 * delta_60
-            + 0.15 * acceleration
-            + 0.20 * response
+            0.25 * delta_30
+            + 0.15 * delta_60
+            + 0.10 * acceleration
+            + 0.20 * ofi_30
+            + 0.10 * ofi_60
+            + 0.05 * ofi_acceleration
+            + 0.05 * microprice
+            + 0.10 * response
         );
         result.directional_score = std::clamp(
             raw_score * result.evidence_quality_percent / 100.0,
@@ -155,12 +199,12 @@ domain::OrderFlowAssessment OrderFlowSignalAnalyzer::analyze(
     }
 
     if (!thirty_seconds.complete || !one_minute.complete
-        || !thirty_seconds.flow.delta_ratio_percent.has_value()
+        || !result.combined_pressure_percent.has_value()
         || !result.thirty_second_price_atr.has_value()) {
         return result;
     }
 
-    const double delta = *thirty_seconds.flow.delta_ratio_percent;
+    const double delta = *result.combined_pressure_percent;
     const double response = *result.thirty_second_price_atr;
     if (std::abs(delta) < settings_.balanced_delta_ratio_percent) {
         result.pressure = domain::OrderFlowPressureState::balanced;

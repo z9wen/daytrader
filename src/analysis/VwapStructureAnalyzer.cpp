@@ -6,6 +6,18 @@
 #include <cmath>
 
 namespace daytrader::analysis {
+namespace {
+
+[[nodiscard]] bool is_regular_session(
+    std::int64_t epoch_seconds,
+    const time::TimeZoneFormatter& time_formatter
+)
+{
+    const int minute = time_formatter.minutes_since_midnight(epoch_seconds);
+    return minute >= 9 * 60 + 30 && minute < 16 * 60;
+}
+
+} // namespace
 
 domain::VwapStructureState VwapStructureAnalyzer::analyze(
     std::span<const domain::MarketBar* const> bars,
@@ -33,6 +45,14 @@ domain::VwapStructureState VwapStructureAnalyzer::analyze(
     }
 
     const double previous_close = bars[bars.size() - 2]->close;
+    // EXT and RTH have independent anchors. Crossing 09:30 or 16:00 switches
+    // the active reference, so it must not be reported as a price reclaim/loss.
+    if (is_regular_session(bars[bars.size() - 2]->epoch_seconds, time_formatter)
+        != is_regular_session(bars.back()->epoch_seconds, time_formatter)) {
+        return current_close >= *current_vwap
+            ? domain::VwapStructureState::above_flat
+            : domain::VwapStructureState::below;
+    }
     if (previous_close <= *previous_vwap && current_close > *current_vwap) {
         return domain::VwapStructureState::reclaimed;
     }

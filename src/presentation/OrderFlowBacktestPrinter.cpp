@@ -60,8 +60,8 @@ std::string OrderFlowBacktestPrinter::render(
            << "Baseline: " << report.baseline.strategy_name << " | "
            << report.baseline.first_session << " to " << report.baseline.last_session
            << " | " << report.baseline.trades << " candidate trades\n"
-           << "CONFIRM requires positive 30s and 1m DeltaRatio with at least 80% "
-              "classified volume. FLOW also evaluates ATR-normalized price response.\n"
+           << "FLOW combines aggressive-trade Delta, Level-1 quote-event OFI, "
+              "microprice and ATR-normalized price response.\n"
            << "Tick evidence ends before entry; quality measures evidence, not direction.\n\n";
 
     output << std::left << std::setw(12) << "date"
@@ -71,6 +71,9 @@ std::string OrderFlowBacktestPrinter::render(
            << std::setw(8) << "ATRx"
            << std::setw(8) << "D30"
            << std::setw(8) << "D60"
+           << std::setw(8) << "O30"
+           << std::setw(8) << "O60"
+           << std::setw(8) << "mix30"
            << std::setw(9) << "dDelta"
            << std::setw(10) << "P30 ATR"
            << std::setw(11) << "impactATR"
@@ -96,6 +99,24 @@ std::string OrderFlowBacktestPrinter::render(
                << candidate.trade.signal_atr_expansion_ratio;
         write_metric(output, candidate.thirty_seconds, 8);
         write_metric(output, candidate.one_minute, 8);
+        write_optional(
+            output,
+            candidate.thirty_seconds.flow.level1_ofi_ratio_percent,
+            8,
+            1
+        );
+        write_optional(
+            output,
+            candidate.one_minute.flow.level1_ofi_ratio_percent,
+            8,
+            1
+        );
+        write_optional(
+            output,
+            candidate.assessment.combined_pressure_percent,
+            8,
+            1
+        );
         write_optional(
             output,
             candidate.assessment.delta_acceleration_points,
@@ -153,6 +174,7 @@ std::string OrderFlowBacktestPrinter::render(
     write_subset("Bearish flow", report.bearish_flow);
     write_subset("Balanced flow", report.balanced_flow);
     output << "ATR is completed 5-minute SOXX ATR14; ATRx is ATR5 / ATR14. "
+              "O30/O60 are Level-1 OFI; mix30 blends Delta and OFI. "
               "impactATR normalizes 30-second response to a hypothetical 100% DeltaRatio.\n"
            << "Score is a quality-adjusted -100..100 directional diagnostic, not a "
               "probability or an active strategy gate.\n"

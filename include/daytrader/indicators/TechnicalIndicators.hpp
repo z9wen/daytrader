@@ -21,7 +21,21 @@ struct EmaState {
     std::size_t period
 );
 
-// Calculates regular-session VWAP from IBKR weighted price and volume fields.
+// Calculates the current extended-hours segment VWAP. During RTH the completed
+// premarket anchor remains visible; after 16:00 a fresh after-hours anchor starts.
+[[nodiscard]] std::optional<double> extended_session_vwap(
+    std::span<const domain::MarketBar* const> bars,
+    const time::TimeZoneFormatter& time_formatter
+);
+
+// Calculates the independently anchored 09:30-16:00 New York VWAP.
+[[nodiscard]] std::optional<double> regular_session_vwap(
+    std::span<const domain::MarketBar* const> bars,
+    const time::TimeZoneFormatter& time_formatter
+);
+
+// Chooses RTH VWAP during regular trading and EXT VWAP outside RTH. Existing
+// callers retain one active reference while snapshots expose both anchors.
 [[nodiscard]] std::optional<double> session_vwap(
     std::span<const domain::MarketBar* const> bars,
     const time::TimeZoneFormatter& time_formatter

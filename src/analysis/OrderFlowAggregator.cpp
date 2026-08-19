@@ -12,10 +12,40 @@ struct Accumulator {
     domain::OrderFlowBar bar;
     double quote_classified_volume{};
     double quote_imbalance_sum{};
+    double ofi_activity{};
+    double spread_basis_points_sum{};
     std::size_t quote_count{};
     std::optional<double> first_trade_price;
     std::optional<double> last_trade_price;
 };
+
+[[nodiscard]] bool valid_quote(const domain::BidAskTick& quote)
+{
+    return std::isfinite(quote.bid_price) && std::isfinite(quote.ask_price)
+        && std::isfinite(quote.bid_size) && std::isfinite(quote.ask_size)
+        && quote.bid_price > 0.0 && quote.ask_price >= quote.bid_price
+        && quote.bid_size >= 0.0 && quote.ask_size >= 0.0;
+}
+
+[[nodiscard]] double bid_ofi(
+    const domain::BidAskTick& previous,
+    const domain::BidAskTick& current
+)
+{
+    return current.bid_price > previous.bid_price ? current.bid_size
+        : (current.bid_price < previous.bid_price ? -previous.bid_size
+                                                   : current.bid_size - previous.bid_size);
+}
+
+[[nodiscard]] double ask_ofi(
+    const domain::BidAskTick& previous,
+    const domain::BidAskTick& current
+)
+{
+    return current.ask_price > previous.ask_price ? previous.ask_size
+        : (current.ask_price < previous.ask_price ? -current.ask_size
+                                                   : previous.ask_size - current.ask_size);
+}
 
 [[nodiscard]] std::int64_t bucket_start(
     std::int64_t timestamp,
@@ -78,16 +108,42 @@ std::vector<domain::OrderFlowBar> OrderFlowAggregator::aggregate(
         }
     }
 
+    std::optional<domain::BidAskTick> previous_quote;
     for (const auto& quote : quotes) {
-        const double displayed_size = quote.bid_size + quote.ask_size;
-        if (!std::isfinite(displayed_size) || displayed_size <= 0.0) {
+        if (!valid_quote(quote)) {
             continue;
         }
+        const double displayed_size = quote.bid_size + quote.ask_size;
         const auto start = bucket_start(quote.epoch_seconds, interval_seconds);
         auto& accumulator = buckets[start];
         accumulator.bar.epoch_seconds = start;
-        accumulator.quote_imbalance_sum +=
-            (quote.bid_size - quote.ask_size) / displayed_size * 100.0;
+        const double midpoint = (quote.bid_price + quote.ask_price) / 2.0;
+        if (!accumulator.bar.first_midpoint_price.has_value()) {
+            accumulator.bar.first_midpoint_price = midpoint;
+        }
+        accumulator.bar.last_midpoint_price = midpoint;
+        if (displayed_size > 0.0) {
+            accumulator.quote_imbalance_sum +=
+                (quote.bid_size - quote.ask_size) / displayed_size * 100.0;
+            const double microprice = (
+                quote.ask_price * quote.bid_size
+                + quote.bid_price * quote.ask_size
+            ) / displayed_size;
+            accumulator.bar.microprice_skew_basis_points = midpoint > 0.0
+                ? std::optional<double>{(microprice / midpoint - 1.0) * 10'000.0}
+                : std::nullopt;
+        }
+        if (midpoint > 0.0) {
+            accumulator.spread_basis_points_sum +=
+                (quote.ask_price - quote.bid_price) / midpoint * 10'000.0;
+        }
+        if (previous_quote.has_value()) {
+            const double bid_event = bid_ofi(*previous_quote, quote);
+            const double ask_event = ask_ofi(*previous_quote, quote);
+            accumulator.bar.level1_ofi += bid_event + ask_event;
+            accumulator.ofi_activity += std::abs(bid_event) + std::abs(ask_event);
+        }
+        previous_quote = quote;
         ++accumulator.quote_count;
     }
 
@@ -111,6 +167,15 @@ std::vector<domain::OrderFlowBar> OrderFlowAggregator::aggregate(
         if (accumulator.quote_count > 0) {
             bar.average_quote_imbalance_percent = accumulator.quote_imbalance_sum
                 / static_cast<double>(accumulator.quote_count);
+            bar.average_spread_basis_points = accumulator.spread_basis_points_sum
+                / static_cast<double>(accumulator.quote_count);
+        }
+        if (accumulator.ofi_activity > 0.0) {
+            bar.level1_ofi_ratio_percent = std::clamp(
+                bar.level1_ofi / accumulator.ofi_activity * 100.0,
+                -100.0,
+                100.0
+            );
         }
         if (accumulator.first_trade_price.has_value()
             && accumulator.last_trade_price.has_value()
@@ -119,6 +184,12 @@ std::vector<domain::OrderFlowBar> OrderFlowAggregator::aggregate(
             bar.last_trade_price = accumulator.last_trade_price;
             bar.price_change_basis_points =
                 (*accumulator.last_trade_price / *accumulator.first_trade_price - 1.0)
+                * 10'000.0;
+        } else if (bar.first_midpoint_price.has_value()
+                   && bar.last_midpoint_price.has_value()
+                   && *bar.first_midpoint_price > 0.0) {
+            bar.price_change_basis_points =
+                (*bar.last_midpoint_price / *bar.first_midpoint_price - 1.0)
                 * 10'000.0;
         }
         if (bar.price_change_basis_points.has_value()

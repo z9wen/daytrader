@@ -79,6 +79,8 @@ std::optional<domain::RankedEtf> RelativeStrengthRanker::rank(
         .leveraged_short_symbol = etf.leveraged_short_symbol,
         .aligned_bar_count = signal_vs_benchmark.size(),
         .close = snapshot.close,
+        .extended_vwap = snapshot.extended_vwap,
+        .regular_vwap = snapshot.regular_vwap,
         .session_vwap = snapshot.session_vwap,
         .ema20 = snapshot.ema20,
         .ema20_change_percent = snapshot.ema20_change_percent,

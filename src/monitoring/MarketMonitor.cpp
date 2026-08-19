@@ -2,6 +2,7 @@
 
 #include "daytrader/analysis/MarketScanner.hpp"
 #include "daytrader/analysis/LiveTradeContextEnricher.hpp"
+#include "daytrader/analysis/SetupCalibrationEngine.hpp"
 #include "daytrader/ibkr/IbkrErrorClassifier.hpp"
 #include "daytrader/ibkr/HistoricalRequestPlanner.hpp"
 #include "daytrader/ibkr/TwsLiveContextClient.hpp"
@@ -199,6 +200,12 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
     const storage::MarketDataCsvStore cache{config_.minute_data_directory};
     auto history = cache.load(request_symbols);
     market_data::sort_and_deduplicate_bars(history);
+    analysis::SetupCalibrationEngine setup_calibration{
+        config_.minute_data_directory.parent_path() / "setup_outcomes.csv",
+        config_.time_zone,
+    };
+    std::clog << "Loaded " << setup_calibration.record_count()
+              << " BUILDING/READY outcome observations\n";
     std::mutex history_mutex;
     const analysis::MarketScanner scanner{
         config_.time_zone,
@@ -254,8 +261,8 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
         }
     }};
 
-    // Completed one-minute bars update execution state; streaming prices, P&L
-    // and DeltaRatio continue to refresh the dashboard every second.
+    // Completed one-minute bars update execution state; streaming prices, P&L,
+    // trade Delta, and Level-1 OFI refresh the dashboard every second.
     std::jthread refresh_thread{[&](std::stop_token token) {
         const analysis::LiveTradeContextEnricher enricher;
         while (!token.stop_requested() && !stop_requested()) {
@@ -269,6 +276,7 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
                     std::move(*scan),
                     live_context_store.snapshot()
                 );
+                setup_calibration.enrich(*scan);
                 dashboard.update(*scan);
             }
             for (int tenth = 0; tenth < 10 && !token.stop_requested()
@@ -346,14 +354,23 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
                             // information or force an IBKR reconnect.
                             std::cerr << "daytrader cache: " << exception.what() << '\n';
                         }
-                        {
-                            const std::lock_guard lock{latest_scan_mutex};
-                            latest_scan = scan;
-                        }
                         scan = analysis::LiveTradeContextEnricher{}.enrich(
                             std::move(scan),
                             live_context_store.snapshot()
                         );
+                        try {
+                            const std::lock_guard lock{history_mutex};
+                            setup_calibration.observe_and_enrich(scan, history);
+                        } catch (const std::exception& exception) {
+                            // Calibration persistence is decision-support state;
+                            // a local file problem must not interrupt live data.
+                            std::cerr << "daytrader setup calibration: "
+                                      << exception.what() << '\n';
+                        }
+                        {
+                            const std::lock_guard lock{latest_scan_mutex};
+                            latest_scan = scan;
+                        }
                         dashboard.update(scan);
                         last_scan_timestamp = scan.epoch_seconds;
                     }

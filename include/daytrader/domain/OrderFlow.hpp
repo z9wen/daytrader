@@ -44,9 +44,9 @@ struct ClassifiedTrade {
     TradeClassificationMethod method{TradeClassificationMethod::unknown};
 };
 
-// One normalized interval of aggressive volume. DeltaRatio is deliberately
-// based only on classified volume; coverage discloses how much total volume was
-// actually usable so a large ratio with weak evidence is not over-trusted.
+// One normalized interval of aggressive trades and Level-1 quote events.
+// DeltaRatio stays based only on classified volume; coverage discloses how much
+// total volume was usable so a large ratio with weak evidence is not over-trusted.
 struct OrderFlowBar {
     std::int64_t epoch_seconds{};
     double buy_volume{};
@@ -57,8 +57,16 @@ struct OrderFlowBar {
     double classification_coverage_percent{};
     double quote_test_coverage_percent{};
     std::optional<double> average_quote_imbalance_percent;
+    // Event-based best-bid/ask Order Flow Imbalance. The ratio normalizes the
+    // signed OFI by total absolute quote activity into [-100, 100].
+    double level1_ofi{};
+    std::optional<double> level1_ofi_ratio_percent;
+    std::optional<double> average_spread_basis_points;
+    std::optional<double> microprice_skew_basis_points;
     std::optional<double> first_trade_price;
     std::optional<double> last_trade_price;
+    std::optional<double> first_midpoint_price;
+    std::optional<double> last_midpoint_price;
     std::optional<double> price_change_basis_points;
     // Price displacement per absolute DeltaRatio percentage point. A small
     // value under strong positive Delta is a useful absorption warning.
@@ -101,16 +109,20 @@ enum class AtrVolatilityState {
 };
 
 // Combines event imbalance with the 5-minute signal ETF's ATR. This separates
-// pressure (DeltaRatio) from response (how far price actually moved).
+// pressure (trade Delta plus Level-1 OFI) from the resulting price response.
 struct OrderFlowAssessment {
     std::optional<double> delta_acceleration_points;
+    std::optional<double> ofi_acceleration_points;
+    // Blends aggressive trade Delta with quote-event OFI. It remains a signed
+    // pressure diagnostic rather than a probability.
+    std::optional<double> combined_pressure_percent;
     std::optional<double> thirty_second_price_atr;
     std::optional<double> one_minute_price_atr;
     // Signed ATR displacement expected at a hypothetical 100% one-sided Delta.
     std::optional<double> normalized_impact_atr;
     // Signed, quality-adjusted diagnostic in [-100, 100]. This is deliberately
     // not a probability: positive values favor buyers and negative values favor
-    // sellers after combining 30s/60s Delta, acceleration, and ATR response.
+    // sellers after combining trade Delta, OFI, acceleration, and ATR response.
     std::optional<double> directional_score;
     double evidence_quality_percent{};
     OrderFlowPressureState pressure{OrderFlowPressureState::insufficient_data};

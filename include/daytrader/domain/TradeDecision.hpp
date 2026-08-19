@@ -1,5 +1,8 @@
 #pragma once
 
+#include "daytrader/domain/SetupCalibration.hpp"
+
+#include <optional>
 #include <string_view>
 
 namespace daytrader::domain {
@@ -38,6 +41,7 @@ struct LongOpportunity {
     BullishPhase phase{BullishPhase::neutral};
     LongEntryDecision entry{LongEntryDecision::avoid};
     HoldingGuidance if_held{HoldingGuidance::protect};
+    std::optional<SetupProbabilityEstimate> setup_probability;
 };
 
 // Final action for a leveraged execution instrument. Signal phase/score remain
@@ -46,6 +50,7 @@ struct LongOpportunity {
 struct LeveragedExecutionDecision {
     LongEntryDecision entry{LongEntryDecision::avoid};
     HoldingGuidance if_held{HoldingGuidance::protect};
+    std::optional<SetupProbabilityEstimate> setup_probability;
 };
 
 [[nodiscard]] constexpr std::string_view to_string(BullishPhase phase)

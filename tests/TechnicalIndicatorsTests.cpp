@@ -58,6 +58,70 @@ void vwap_uses_only_the_latest_new_york_session()
     require_near(*value, 107.5, "VWAP should exclude the previous session");
 }
 
+void extended_and_regular_vwap_keep_independent_anchors()
+{
+    using daytrader::domain::MarketBar;
+    const MarketBar premarket{
+        .epoch_seconds = 1'704'200'400, // 08:00 America/New_York
+        .volume = 100.0,
+        .weighted_average_price = 90.0,
+    };
+    const MarketBar open{
+        .epoch_seconds = 1'704'205'800, // 09:30 America/New_York
+        .volume = 100.0,
+        .weighted_average_price = 100.0,
+    };
+    const MarketBar next{
+        .epoch_seconds = 1'704'205'860,
+        .volume = 300.0,
+        .weighted_average_price = 110.0,
+    };
+    const std::array<const MarketBar*, 3> bars{&premarket, &open, &next};
+    const daytrader::time::TimeZoneFormatter formatter{"America/New_York"};
+
+    const auto extended = daytrader::indicators::extended_session_vwap(
+        bars,
+        formatter
+    );
+    const auto regular = daytrader::indicators::regular_session_vwap(
+        bars,
+        formatter
+    );
+    const auto active = daytrader::indicators::session_vwap(bars, formatter);
+    require(extended.has_value() && regular.has_value() && active.has_value(),
+            "expected both independently anchored VWAPs");
+    require_near(*extended, 90.0,
+                 "EXT VWAP should keep the premarket segment independent");
+    require_near(*regular, 107.5, "RTH VWAP should begin at 09:30");
+    require_near(*active, *regular, "RTH should be the active intraday VWAP");
+
+    const MarketBar after_hours{
+        .epoch_seconds = 1'704'229'200, // 16:00 America/New_York
+        .volume = 200.0,
+        .weighted_average_price = 112.0,
+    };
+    const std::array<const MarketBar*, 4> after_hours_bars{
+        &premarket,
+        &open,
+        &next,
+        &after_hours,
+    };
+    const auto after_hours_extended = daytrader::indicators::extended_session_vwap(
+        after_hours_bars,
+        formatter
+    );
+    const auto after_hours_active = daytrader::indicators::session_vwap(
+        after_hours_bars,
+        formatter
+    );
+    require(after_hours_extended.has_value() && after_hours_active.has_value(),
+            "after-hours VWAP should be available");
+    require_near(*after_hours_extended, 112.0,
+                 "after-hours VWAP should restart independently at 16:00");
+    require_near(*after_hours_active, *after_hours_extended,
+                 "EXT should be the active VWAP after 16:00");
+}
+
 void atr_uses_true_ranges_and_wilder_initial_average()
 {
     using daytrader::domain::MarketBar;
@@ -77,6 +141,7 @@ int main()
     try {
         ema_returns_current_and_previous_values();
         vwap_uses_only_the_latest_new_york_session();
+        extended_and_regular_vwap_keep_independent_anchors();
         atr_uses_true_ranges_and_wilder_initial_average();
         std::cout << "TechnicalIndicatorsTests passed\n";
         return 0;

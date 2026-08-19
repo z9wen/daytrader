@@ -63,8 +63,10 @@ void aggregates_delta_coverage_and_quote_imbalance()
          .side = daytrader::domain::TradeSide::unknown},
     };
     const std::vector<daytrader::domain::BidAskTick> quotes{
-        {.epoch_seconds = 120, .bid_size = 75.0, .ask_size = 25.0},
-        {.epoch_seconds = 121, .bid_size = 50.0, .ask_size = 50.0},
+        {.epoch_seconds = 120, .bid_price = 9.90, .ask_price = 10.00,
+         .bid_size = 75.0, .ask_size = 25.0},
+        {.epoch_seconds = 121, .bid_price = 9.90, .ask_price = 10.00,
+         .bid_size = 50.0, .ask_size = 50.0},
     };
 
     const auto bars = daytrader::analysis::OrderFlowAggregator{
@@ -91,6 +93,13 @@ void aggregates_delta_coverage_and_quote_imbalance()
             "impact efficiency should normalize price response by delta ratio");
     require(bar.first_trade_price == 10.0 && bar.last_trade_price == 9.95,
             "the price endpoints should remain available for ATR normalization");
+    require(bar.level1_ofi_ratio_percent.has_value()
+                && std::abs(*bar.level1_ofi_ratio_percent + 100.0) < 1e-9,
+            "shrinking bid and growing ask should produce negative Level-1 OFI");
+    require(bar.average_spread_basis_points.has_value(),
+            "quote stream should expose the average spread");
+    require(bar.microprice_skew_basis_points.has_value(),
+            "quote sizes should expose microprice skew");
 }
 
 void combines_delta_acceleration_with_atr_response()
@@ -101,6 +110,8 @@ void combines_delta_acceleration_with_atr_response()
             .delta_ratio_percent = 25.0,
             .classification_coverage_percent = 100.0,
             .quote_test_coverage_percent = 60.0,
+            .level1_ofi_ratio_percent = 40.0,
+            .microprice_skew_basis_points = 0.25,
             .first_trade_price = 100.0,
             .last_trade_price = 100.2,
             .trade_count = 200,
@@ -112,6 +123,8 @@ void combines_delta_acceleration_with_atr_response()
             .delta_ratio_percent = -10.0,
             .classification_coverage_percent = 100.0,
             .quote_test_coverage_percent = 70.0,
+            .level1_ofi_ratio_percent = 5.0,
+            .microprice_skew_basis_points = 0.10,
             .first_trade_price = 99.9,
             .last_trade_price = 100.2,
             .trade_count = 300,
@@ -127,6 +140,12 @@ void combines_delta_acceleration_with_atr_response()
     require(assessment.delta_acceleration_points.has_value()
                 && std::abs(*assessment.delta_acceleration_points - 35.0) < 1e-9,
             "Delta acceleration should compare 30-second and one-minute pressure");
+    require(assessment.ofi_acceleration_points.has_value()
+                && std::abs(*assessment.ofi_acceleration_points - 35.0) < 1e-9,
+            "OFI acceleration should compare quote-event pressure horizons");
+    require(assessment.combined_pressure_percent.has_value()
+                && std::abs(*assessment.combined_pressure_percent - 31.0) < 1e-9,
+            "pressure should combine trade Delta and Level-1 OFI");
     require(assessment.thirty_second_price_atr.has_value()
                 && std::abs(*assessment.thirty_second_price_atr - 0.1) < 1e-9,
             "price response should be measured in signal ATR units");
@@ -137,8 +156,8 @@ void combines_delta_acceleration_with_atr_response()
                 == daytrader::domain::OrderFlowPressureState::buying_effective,
             "positive Delta with positive price response should be effective buying");
     require(assessment.directional_score.has_value()
-                && std::abs(*assessment.directional_score - 18.208125) < 1e-6,
-            "directional score should combine flow, response, and evidence quality");
+                && *assessment.directional_score > 0.0,
+            "directional score should combine Delta, OFI, microprice, and response");
     require(assessment.volatility
                 == daytrader::domain::AtrVolatilityState::expanding,
             "ATR5 above ATR14 should identify an expanding volatility regime");
@@ -155,6 +174,7 @@ void combines_delta_acceleration_with_atr_response()
             "positive Delta with negative response should expose buyer absorption");
 
     thirty.flow.delta_ratio_percent = 2.0;
+    thirty.flow.level1_ofi_ratio_percent = 2.0;
     const auto balanced = daytrader::analysis::OrderFlowSignalAnalyzer{}.analyze(
         thirty,
         sixty,

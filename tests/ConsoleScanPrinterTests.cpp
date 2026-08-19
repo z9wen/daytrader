@@ -86,8 +86,20 @@ void require(bool condition, const std::string& message)
     auto scan = daytrader::domain::MarketScan{
         .epoch_seconds = 1'700'000'000,
         .aligned_market_bar_count = 40,
-        .spy = daytrader::domain::EtfSnapshot{.symbol = "SPY", .close = 500.0},
-        .qqq = daytrader::domain::EtfSnapshot{.symbol = "QQQ", .close = 450.0},
+        .spy = daytrader::domain::EtfSnapshot{
+            .symbol = "SPY",
+            .close = 500.0,
+            .extended_vwap = 499.0,
+            .regular_vwap = 500.5,
+        },
+        .qqq = daytrader::domain::EtfSnapshot{
+            .symbol = "QQQ",
+            .close = 450.0,
+            .extended_vwap = 448.5,
+            .regular_vwap = 449.0,
+            .session_vwap = 449.0,
+            .ema20_change_percent = 0.1,
+        },
         .tqqq = daytrader::domain::EtfSnapshot{
             .symbol = "TQQQ",
             .close = 80.0,
@@ -110,6 +122,14 @@ void require(bool condition, const std::string& message)
         .tqqq_execution = daytrader::domain::LeveragedExecutionDecision{
             .entry = daytrader::domain::LongEntryDecision::wait_for_flow,
             .if_held = daytrader::domain::HoldingGuidance::protect,
+        },
+        .qqq_building_probability = daytrader::domain::SetupProbabilityEstimate{
+            .success_probability_percent = 66.7,
+            .lower_confidence_percent = 41.0,
+            .upper_confidence_percent = 86.0,
+            .samples = 14,
+            .successes = 9,
+            .scope = daytrader::domain::CalibrationScope::symbol,
         },
         .vix = daytrader::domain::VolatilitySnapshot{
             .close = 18.0,
@@ -165,6 +185,8 @@ void renders_independent_tabs_and_column_order()
 
     const auto market = printer.render(scan, DashboardTab::market);
     require(contains(market, "MARKET DIRECTION"), "market tab should show direction ETFs");
+    require(contains(market, "EXT VWAP") && contains(market, "RTH VWAP"),
+            "market tab should expose independent extended and regular VWAP anchors");
     require(contains(market, "TQQQ EXECUTION"), "market tab should show TQQQ execution");
     require(contains(market, "79.40-79.60"), "market tab should show the TQQQ entry zone");
     require(contains(market, "WAIT_FLOW"),
@@ -177,6 +199,12 @@ void renders_independent_tabs_and_column_order()
     require(contains(trade, "LIVE TRADE CONTEXT"), "trade tab should show live context");
     require(contains(trade, "SOXL"), "trade tab should show open positions");
     require(contains(trade, "BUY_EFFECTIVE"), "trade tab should show flow pressure");
+    require(contains(trade, "SETUP OUTCOME CALIBRATION"),
+            "trade tab should disclose empirical setup calibration");
+    require(contains(trade, "66.7/14") || contains(trade, "67/14"),
+            "trade tab should display setup probability together with sample depth");
+    require(contains(trade, "OFI30") && contains(trade, "mix30"),
+            "trade tab should expose Level-1 OFI and combined flow pressure");
     require(contains(trade, "LIVE=1"),
             "trade tab should display IBKR's actual market-data callback mode");
     require(contains(trade, "TRIM"),

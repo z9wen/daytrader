@@ -51,6 +51,8 @@ std::optional<domain::EntryZone> EntryZoneCalculator::calculate(
         .lower_price = std::max(0.0, lower),
         .upper_price = upper,
         .current_price = snapshot.close,
+        .extended_vwap = snapshot.extended_vwap,
+        .regular_vwap = snapshot.regular_vwap,
         .session_vwap = *snapshot.session_vwap,
         .atr14 = atr,
         .atr5 = fast_atr,

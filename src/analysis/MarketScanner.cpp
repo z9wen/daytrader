@@ -144,6 +144,8 @@ namespace {
                 time_formatter
             ); execution_snapshot.has_value()) {
             rank->close = execution_snapshot->close;
+            rank->extended_vwap = execution_snapshot->extended_vwap;
+            rank->regular_vwap = execution_snapshot->regular_vwap;
             rank->session_vwap = execution_snapshot->session_vwap;
             rank->vwap_structure = execution_snapshot->vwap_structure;
             rank->relative_volume = execution_snapshot->relative_volume;
@@ -254,6 +256,8 @@ domain::MarketScan MarketScanner::scan(
             return;
         }
         target.close = snapshot->close;
+        target.extended_vwap = snapshot->extended_vwap;
+        target.regular_vwap = snapshot->regular_vwap;
         target.session_vwap = snapshot->session_vwap;
         target.vwap_structure = snapshot->vwap_structure;
         target.relative_volume = snapshot->relative_volume;

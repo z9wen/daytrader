@@ -134,6 +134,7 @@ add_library(daytrader_core
     src/analysis/RelativeStrengthRanker.cpp
     src/analysis/RelativeVolumeAnalyzer.cpp
     src/analysis/RotationGrouper.cpp
+    src/analysis/SetupCalibrationEngine.cpp
     src/analysis/TradeClassifier.cpp
     src/analysis/VixAnalyzer.cpp
     src/analysis/VwapStructureAnalyzer.cpp
@@ -165,6 +166,7 @@ add_library(daytrader_core
     src/runtime/ShutdownSignal.cpp
     src/storage/MarketDataCsvStore.cpp
     src/storage/OrderFlowTickCsvStore.cpp
+    src/storage/SetupOutcomeCsvStore.cpp
     src/strategy/LeveragedEtfSelector.cpp
     src/time/TimeZoneFormatter.cpp
     src/universe/EtfUniverse.cpp
@@ -231,4 +233,5 @@ if(BUILD_TESTING)
     daytrader_add_test(daytrader_live_trade_context_tests tests/LiveTradeContextTests.cpp)
     daytrader_add_test(daytrader_terminal_key_decoder_tests tests/TerminalKeyDecoderTests.cpp)
     daytrader_add_test(daytrader_leveraged_execution_tests tests/LeveragedExecutionTests.cpp)
+    daytrader_add_test(daytrader_setup_calibration_tests tests/SetupCalibrationTests.cpp)
 endif()

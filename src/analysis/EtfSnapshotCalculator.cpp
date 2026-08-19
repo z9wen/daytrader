@@ -50,6 +50,8 @@ domain::EtfSnapshot EtfSnapshotCalculator::calculate(
     const double ema_change = ema.previous == 0.0
         ? 0.0
         : ((ema.current / ema.previous) - 1.0) * 100.0;
+    const auto extended_vwap = indicators::extended_session_vwap(bars, time_formatter);
+    const auto regular_vwap = indicators::regular_session_vwap(bars, time_formatter);
     const auto session_vwap = indicators::session_vwap(bars, time_formatter);
     const double close = closes.back();
     const double atr14 = indicators::average_true_range(bars, atr_period);
@@ -58,6 +60,8 @@ domain::EtfSnapshot EtfSnapshotCalculator::calculate(
     return domain::EtfSnapshot{
         .symbol = std::move(symbol),
         .close = close,
+        .extended_vwap = extended_vwap,
+        .regular_vwap = regular_vwap,
         .session_vwap = session_vwap,
         .ema20 = ema.current,
         .ema20_change_percent = ema_change,

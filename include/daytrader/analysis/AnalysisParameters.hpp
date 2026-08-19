@@ -14,7 +14,7 @@ inline constexpr std::size_t fast_atr_period = 5;
 inline constexpr std::size_t relative_strength_lookback_15 = 3;
 inline constexpr std::size_t relative_strength_lookback_30 = 6;
 inline constexpr std::size_t relative_strength_lookback = 12;
-// Entry zones use a deliberately narrow quarter-ATR band around session VWAP.
+// Entry zones use a deliberately narrow quarter-ATR band around the active VWAP.
 inline constexpr double entry_zone_atr_half_width = 0.25;
 // Live execution confirmation and MFE giveback thresholds. Profit protection
 // activates only after a non-trivial peak return to avoid reacting to pennies.

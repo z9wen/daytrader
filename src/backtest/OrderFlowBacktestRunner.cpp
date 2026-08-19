@@ -250,8 +250,8 @@ OrderFlowBacktestReport OrderFlowBacktestRunner::run(
 
             const bool enough_data = candidate.thirty_seconds.complete
                 && candidate.one_minute.complete
-                && candidate.thirty_seconds.flow.delta_ratio_percent.has_value()
-                && candidate.one_minute.flow.delta_ratio_percent.has_value();
+                && candidate.assessment.combined_pressure_percent.has_value()
+                && candidate.assessment.thirty_second_price_atr.has_value();
             if (!enough_data) {
                 candidate.verdict = OrderFlowVerdict::insufficient_data;
             } else if (candidate.assessment.pressure

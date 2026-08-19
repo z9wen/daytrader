@@ -27,9 +27,13 @@ EmaState exponential_moving_average(std::span<const double> values, std::size_t 
     return EmaState{.current = ema, .previous = previous};
 }
 
-std::optional<double> session_vwap(
+namespace {
+
+template <typename IncludeBar>
+[[nodiscard]] std::optional<double> calculate_vwap(
     std::span<const domain::MarketBar* const> bars,
-    const time::TimeZoneFormatter& time_formatter
+    const time::TimeZoneFormatter& time_formatter,
+    IncludeBar include_bar
 )
 {
     if (bars.empty()) {
@@ -44,6 +48,9 @@ std::optional<double> session_vwap(
         const auto& current = **bar;
         if (time_formatter.format_date(current.epoch_seconds) != latest_session) {
             break;
+        }
+        if (!include_bar(current)) {
+            continue;
         }
         if (!current.volume.has_value() || *current.volume <= 0.0) {
             continue;
@@ -60,6 +67,68 @@ std::optional<double> session_vwap(
         return std::nullopt;
     }
     return price_volume_sum / volume_sum;
+}
+
+[[nodiscard]] bool is_regular_session(
+    std::int64_t epoch_seconds,
+    const time::TimeZoneFormatter& time_formatter
+)
+{
+    const int minute = time_formatter.minutes_since_midnight(epoch_seconds);
+    return minute >= 9 * 60 + 30 && minute < 16 * 60;
+}
+
+} // namespace
+
+std::optional<double> extended_session_vwap(
+    std::span<const domain::MarketBar* const> bars,
+    const time::TimeZoneFormatter& time_formatter
+)
+{
+    if (bars.empty()) {
+        return std::nullopt;
+    }
+    const int latest_minute = time_formatter.minutes_since_midnight(
+        bars.back()->epoch_seconds
+    );
+    const bool after_hours = latest_minute >= 16 * 60;
+    return calculate_vwap(
+        bars,
+        time_formatter,
+        [&](const domain::MarketBar& bar) {
+            const int minute = time_formatter.minutes_since_midnight(
+                bar.epoch_seconds
+            );
+            return after_hours ? minute >= 16 * 60 : minute < 9 * 60 + 30;
+        }
+    );
+}
+
+std::optional<double> regular_session_vwap(
+    std::span<const domain::MarketBar* const> bars,
+    const time::TimeZoneFormatter& time_formatter
+)
+{
+    return calculate_vwap(
+        bars,
+        time_formatter,
+        [&](const domain::MarketBar& bar) {
+            return is_regular_session(bar.epoch_seconds, time_formatter);
+        }
+    );
+}
+
+std::optional<double> session_vwap(
+    std::span<const domain::MarketBar* const> bars,
+    const time::TimeZoneFormatter& time_formatter
+)
+{
+    if (bars.empty()) {
+        return std::nullopt;
+    }
+    return is_regular_session(bars.back()->epoch_seconds, time_formatter)
+        ? regular_session_vwap(bars, time_formatter)
+        : extended_session_vwap(bars, time_formatter);
 }
 
 double average_true_range(
