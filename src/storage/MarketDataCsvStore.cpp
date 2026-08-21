@@ -2,14 +2,19 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <optional>
+#include <ranges>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 namespace daytrader::storage {
@@ -114,6 +119,29 @@ void write_optional(std::ostream& output, const std::optional<int>& value)
     }
 }
 
+[[nodiscard]] std::vector<domain::MarketBar> read_bars(
+    const std::filesystem::path& path
+)
+{
+    std::ifstream input{path};
+    if (!input) {
+        throw std::runtime_error("unable to open market-data cache: " + path.string());
+    }
+    std::string row;
+    if (!std::getline(input, row) || row != csv_header) {
+        throw std::runtime_error("invalid market-data CSV header: " + path.string());
+    }
+    std::vector<domain::MarketBar> bars;
+    std::size_t line_number = 1;
+    while (std::getline(input, row)) {
+        ++line_number;
+        if (!row.empty()) {
+            bars.push_back(parse_bar(row, path, line_number));
+        }
+    }
+    return bars;
+}
+
 } // namespace
 
 MarketDataCsvStore::MarketDataCsvStore(std::filesystem::path directory)
@@ -133,6 +161,220 @@ std::filesystem::path MarketDataCsvStore::path_for(const std::string& symbol) co
     return directory_ / (symbol + ".csv");
 }
 
+int MarketDataCsvStore::market_year(std::int64_t epoch_seconds)
+{
+    // New York is always UTC-5 around the calendar-year boundary. Subtracting
+    // five hours therefore assigns Dec 31 after-hours bars to the correct
+    // market year without retaining a time-zone cache for millions of rows.
+    using namespace std::chrono;
+    const sys_seconds adjusted{seconds{epoch_seconds} - hours{5}};
+    return static_cast<int>(year_month_day{floor<days>(adjusted)}.year());
+}
+
+std::filesystem::path MarketDataCsvStore::partition_path_for(
+    const std::string& symbol,
+    int year
+) const
+{
+    static_cast<void>(path_for(symbol));
+    if (year < 1900 || year > 3000) {
+        throw std::invalid_argument("invalid cache partition year");
+    }
+    return directory_ / symbol / (std::to_string(year) + ".csv");
+}
+
+std::vector<int> MarketDataCsvStore::partition_years_for(
+    const std::string& symbol
+) const
+{
+    static_cast<void>(path_for(symbol));
+    const auto symbol_directory = directory_ / symbol;
+    std::vector<int> years;
+    if (!std::filesystem::is_directory(symbol_directory)) {
+        return years;
+    }
+    for (const auto& entry : std::filesystem::directory_iterator{symbol_directory}) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".csv") {
+            continue;
+        }
+        const auto stem = entry.path().stem().string();
+        int year{};
+        const auto [end, error] = std::from_chars(
+            stem.data(), stem.data() + stem.size(), year
+        );
+        if (error == std::errc{} && end == stem.data() + stem.size()
+            && year >= 1900 && year <= 3000) {
+            years.push_back(year);
+        }
+    }
+    std::ranges::sort(years);
+    years.erase(std::unique(years.begin(), years.end()), years.end());
+    return years;
+}
+
+domain::InstrumentBars MarketDataCsvStore::load_partition(
+    const std::string& symbol,
+    int year
+) const
+{
+    domain::InstrumentBars result{.symbol = symbol};
+    const auto partition = partition_path_for(symbol, year);
+    if (std::filesystem::exists(partition)) {
+        result.bars = read_bars(partition);
+        return result;
+    }
+
+    // Before a symbol is migrated, extract just this year from its legacy file.
+    const auto legacy = path_for(symbol);
+    if (!std::filesystem::exists(legacy)) {
+        return result;
+    }
+    for (auto& bar : read_bars(legacy)) {
+        if (market_year(bar.epoch_seconds) == year) {
+            result.bars.push_back(std::move(bar));
+        }
+    }
+    return result;
+}
+
+void MarketDataCsvStore::migrate_legacy_partitions(
+    const std::string& symbol,
+    bool force_refresh
+) const
+{
+    const auto legacy = path_for(symbol);
+    const auto marker = directory_ / symbol / ".legacy_imported";
+    if (!std::filesystem::exists(legacy)
+        || (!force_refresh && std::filesystem::exists(marker))) {
+        return;
+    }
+
+    std::map<int, std::vector<domain::MarketBar>> partitions;
+    for (auto& bar : read_bars(legacy)) {
+        partitions[market_year(bar.epoch_seconds)].push_back(std::move(bar));
+    }
+    for (auto& [year, bars] : partitions) {
+        const auto path = partition_path_for(symbol, year);
+        if (std::filesystem::exists(path)) {
+            auto existing = read_bars(path);
+            // A partition may contain a fresher value for a repeated timestamp,
+            // so keep it ahead of the legacy copy during stable de-duplication.
+            existing.insert(existing.end(), bars.begin(), bars.end());
+            bars = std::move(existing);
+        }
+        std::stable_sort(
+            bars.begin(), bars.end(),
+            [](const auto& left, const auto& right) {
+                return left.epoch_seconds < right.epoch_seconds;
+            }
+        );
+        const auto duplicates = std::ranges::unique(
+            bars, {}, &domain::MarketBar::epoch_seconds
+        );
+        bars.erase(duplicates.begin(), duplicates.end());
+        write_partition(symbol, year, bars);
+    }
+
+    std::filesystem::create_directories(marker.parent_path());
+    auto temporary = marker;
+    temporary += ".tmp";
+    {
+        std::ofstream output{temporary, std::ios::trunc};
+        if (!output) {
+            throw std::runtime_error(
+                "unable to write legacy-import marker: " + temporary.string()
+            );
+        }
+        output << "legacy symbol CSV imported into year partitions\n";
+    }
+    std::error_code rename_error;
+    std::filesystem::rename(temporary, marker, rename_error);
+    if (rename_error) {
+        std::filesystem::remove(temporary);
+        throw std::runtime_error(
+            "unable to atomically mark legacy cache import " + marker.string()
+            + ": " + rename_error.message()
+        );
+    }
+}
+
+LegacyMigrationReport MarketDataCsvStore::migrate_legacy_files() const
+{
+    LegacyMigrationReport report{
+        .archive_directory = directory_ / "legacy_flat",
+    };
+    if (!std::filesystem::exists(directory_)) {
+        return report;
+    }
+
+    std::vector<std::filesystem::path> legacy_files;
+    for (const auto& entry : std::filesystem::directory_iterator{directory_}) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".csv") {
+            continue;
+        }
+        const auto filename = entry.path().filename().string();
+        if (!filename.empty() && filename.front() != '.') {
+            legacy_files.push_back(entry.path());
+        }
+    }
+    std::ranges::sort(legacy_files);
+
+    for (const auto& legacy : legacy_files) {
+        const auto symbol = legacy.stem().string();
+        static_cast<void>(path_for(symbol));
+        const auto legacy_bars = read_bars(legacy);
+        std::map<int, std::set<std::int64_t>> expected_timestamps;
+        for (const auto& bar : legacy_bars) {
+            expected_timestamps[market_year(bar.epoch_seconds)].insert(
+                bar.epoch_seconds
+            );
+        }
+
+        migrate_legacy_partitions(symbol, true);
+
+        for (const auto& [year, expected] : expected_timestamps) {
+            const auto partition = partition_path_for(symbol, year);
+            if (!std::filesystem::exists(partition)) {
+                throw std::runtime_error(
+                    "missing year partition after migration: " + partition.string()
+                );
+            }
+            std::set<std::int64_t> actual;
+            for (const auto& bar : read_bars(partition)) {
+                actual.insert(bar.epoch_seconds);
+            }
+            if (!std::ranges::includes(actual, expected)) {
+                throw std::runtime_error(
+                    "year partition failed timestamp verification: "
+                    + partition.string()
+                );
+            }
+        }
+
+        std::filesystem::create_directories(report.archive_directory);
+        const auto archived = report.archive_directory / legacy.filename();
+        if (std::filesystem::exists(archived)) {
+            throw std::runtime_error(
+                "legacy archive already exists; refusing to overwrite: "
+                + archived.string()
+            );
+        }
+        std::error_code rename_error;
+        std::filesystem::rename(legacy, archived, rename_error);
+        if (rename_error) {
+            throw std::runtime_error(
+                "unable to archive migrated cache " + legacy.string() + ": "
+                + rename_error.message()
+            );
+        }
+
+        ++report.symbols;
+        report.bars += legacy_bars.size();
+        report.year_partitions += expected_timestamps.size();
+    }
+    return report;
+}
+
 std::filesystem::path MarketDataCsvStore::completed_sessions_path() const
 {
     return directory_ / ".completed_sessions.csv";
@@ -142,29 +384,52 @@ std::vector<domain::InstrumentBars> MarketDataCsvStore::load(
     std::span<const std::string> symbols
 ) const
 {
+    return load_impl(symbols, std::nullopt);
+}
+
+std::vector<domain::InstrumentBars> MarketDataCsvStore::load_since(
+    std::span<const std::string> symbols,
+    std::int64_t first_epoch_seconds
+) const
+{
+    return load_impl(symbols, first_epoch_seconds);
+}
+
+std::vector<domain::InstrumentBars> MarketDataCsvStore::load_impl(
+    std::span<const std::string> symbols,
+    std::optional<std::int64_t> first_epoch_seconds
+) const
+{
     std::vector<domain::InstrumentBars> instruments;
     instruments.reserve(symbols.size());
+    const std::optional<int> first_year = first_epoch_seconds.has_value()
+        ? std::optional<int>{market_year(*first_epoch_seconds)}
+        : std::nullopt;
     for (const auto& symbol : symbols) {
         domain::InstrumentBars instrument{.symbol = symbol};
-        const auto path = path_for(symbol);
-        if (!std::filesystem::exists(path)) {
-            instruments.push_back(std::move(instrument));
-            continue;
-        }
+        const auto years = partition_years_for(symbol);
+        const std::unordered_set<int> partitioned_years{years.begin(), years.end()};
 
-        std::ifstream input{path};
-        if (!input) {
-            throw std::runtime_error("unable to open market-data cache: " + path.string());
+        const auto legacy = path_for(symbol);
+        if (std::filesystem::exists(legacy)) {
+            for (auto& bar : read_bars(legacy)) {
+                if (!partitioned_years.contains(market_year(bar.epoch_seconds))
+                    && (!first_epoch_seconds.has_value()
+                        || bar.epoch_seconds >= *first_epoch_seconds)) {
+                    instrument.bars.push_back(std::move(bar));
+                }
+            }
         }
-        std::string row;
-        if (!std::getline(input, row) || row != csv_header) {
-            throw std::runtime_error("invalid market-data CSV header: " + path.string());
-        }
-        std::size_t line_number = 1;
-        while (std::getline(input, row)) {
-            ++line_number;
-            if (!row.empty()) {
-                instrument.bars.push_back(parse_bar(row, path, line_number));
+        for (const int year : years) {
+            if (first_year.has_value() && year < *first_year) {
+                continue;
+            }
+            auto partition = load_partition(symbol, year);
+            for (auto& bar : partition.bars) {
+                if (!first_epoch_seconds.has_value()
+                    || bar.epoch_seconds >= *first_epoch_seconds) {
+                    instrument.bars.push_back(std::move(bar));
+                }
             }
         }
         instruments.push_back(std::move(instrument));
@@ -172,51 +437,110 @@ std::vector<domain::InstrumentBars> MarketDataCsvStore::load(
     return instruments;
 }
 
+void MarketDataCsvStore::write_partition(
+    const std::string& symbol,
+    int year,
+    std::span<const domain::MarketBar> bars
+) const
+{
+    const auto path = partition_path_for(symbol, year);
+    std::filesystem::create_directories(path.parent_path());
+    auto temporary = path;
+    temporary += ".tmp";
+    {
+        std::ofstream output{temporary, std::ios::trunc};
+        if (!output) {
+            throw std::runtime_error(
+                "unable to write temporary market-data cache: " + temporary.string()
+            );
+        }
+        output << csv_header << '\n' << std::setprecision(17);
+        for (const auto& bar : bars) {
+            output << bar.epoch_seconds << ','
+                   << bar.open << ',' << bar.high << ',' << bar.low << ','
+                   << bar.close << ',';
+            write_optional(output, bar.volume);
+            output << ',';
+            write_optional(output, bar.weighted_average_price);
+            output << ',';
+            write_optional(output, bar.trade_count);
+            output << '\n';
+        }
+        if (!output) {
+            throw std::runtime_error(
+                "failed while writing temporary market-data cache: "
+                + temporary.string()
+            );
+        }
+    }
+
+    std::error_code rename_error;
+    std::filesystem::rename(temporary, path, rename_error);
+    if (rename_error) {
+        std::filesystem::remove(temporary);
+        throw std::runtime_error(
+            "unable to atomically replace market-data cache " + path.string()
+            + ": " + rename_error.message()
+        );
+    }
+}
+
 void MarketDataCsvStore::save(
     std::span<const domain::InstrumentBars> instruments
 ) const
 {
-    std::filesystem::create_directories(directory_);
     for (const auto& instrument : instruments) {
-        const auto path = path_for(instrument.symbol);
-        auto temporary = path;
-        temporary += ".tmp";
-        {
-            std::ofstream output{temporary, std::ios::trunc};
-            if (!output) {
-                throw std::runtime_error(
-                    "unable to write temporary market-data cache: " + temporary.string()
-                );
-            }
-            output << csv_header << '\n' << std::setprecision(17);
-            for (const auto& bar : instrument.bars) {
-                output << bar.epoch_seconds << ','
-                       << bar.open << ',' << bar.high << ',' << bar.low << ','
-                       << bar.close << ',';
-                write_optional(output, bar.volume);
-                output << ',';
-                write_optional(output, bar.weighted_average_price);
-                output << ',';
-                write_optional(output, bar.trade_count);
-                output << '\n';
-            }
-            if (!output) {
-                throw std::runtime_error(
-                    "failed while writing temporary market-data cache: "
-                    + temporary.string()
-                );
-            }
+        static_cast<void>(path_for(instrument.symbol));
+        std::map<int, std::vector<domain::MarketBar>> partitions;
+        for (const auto& bar : instrument.bars) {
+            partitions[market_year(bar.epoch_seconds)].push_back(bar);
         }
-
-        std::error_code rename_error;
-        std::filesystem::rename(temporary, path, rename_error);
-        if (rename_error) {
-            std::filesystem::remove(temporary);
-            throw std::runtime_error(
-                "unable to atomically replace market-data cache " + path.string()
-                + ": " + rename_error.message()
+        for (auto& [year, bars] : partitions) {
+            std::ranges::sort(bars, {}, &domain::MarketBar::epoch_seconds);
+            const auto duplicates = std::ranges::unique(
+                bars, {}, &domain::MarketBar::epoch_seconds
             );
+            bars.erase(duplicates.begin(), duplicates.end());
+            write_partition(instrument.symbol, year, bars);
         }
+    }
+}
+
+void MarketDataCsvStore::merge(
+    std::span<const domain::InstrumentBars> instruments
+) const
+{
+    std::map<std::pair<std::string, int>, std::vector<domain::MarketBar>> incoming;
+    std::unordered_set<std::string> symbols;
+    for (const auto& instrument : instruments) {
+        static_cast<void>(path_for(instrument.symbol));
+        symbols.insert(instrument.symbol);
+        for (const auto& bar : instrument.bars) {
+            incoming[{instrument.symbol, market_year(bar.epoch_seconds)}].push_back(bar);
+        }
+    }
+
+    for (const auto& symbol : symbols) {
+        migrate_legacy_partitions(symbol);
+    }
+
+    for (auto& [key, bars] : incoming) {
+        const auto& [symbol, year] = key;
+        auto existing = load_partition(symbol, year);
+        // Incoming bars are placed first so a repeated timestamp refreshes the
+        // older cached value after the stable timestamp sort.
+        bars.insert(bars.end(), existing.bars.begin(), existing.bars.end());
+        std::stable_sort(
+            bars.begin(), bars.end(),
+            [](const auto& left, const auto& right) {
+                return left.epoch_seconds < right.epoch_seconds;
+            }
+        );
+        const auto duplicates = std::ranges::unique(
+            bars, {}, &domain::MarketBar::epoch_seconds
+        );
+        bars.erase(duplicates.begin(), duplicates.end());
+        write_partition(symbol, year, bars);
     }
 }
 
@@ -230,9 +554,23 @@ bool MarketDataCsvStore::is_recent(
     }
     const auto now = std::filesystem::file_time_type::clock::now();
     for (const auto& symbol : symbols) {
-        const auto path = path_for(symbol);
-        if (!std::filesystem::exists(path)
-            || now - std::filesystem::last_write_time(path) > maximum_age) {
+        std::vector<std::filesystem::path> paths;
+        for (const int year : partition_years_for(symbol)) {
+            paths.push_back(partition_path_for(symbol, year));
+        }
+        const auto legacy = path_for(symbol);
+        if (paths.empty() && std::filesystem::exists(legacy)) {
+            paths.push_back(legacy);
+        }
+        if (paths.empty()) {
+            return false;
+        }
+        const auto newest = std::ranges::max(
+            paths | std::views::transform([](const auto& path) {
+                return std::filesystem::last_write_time(path);
+            })
+        );
+        if (now - newest > maximum_age) {
             return false;
         }
     }

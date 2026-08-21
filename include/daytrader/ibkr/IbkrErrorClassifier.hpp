@@ -16,6 +16,14 @@ namespace daytrader::ibkr {
 // treated as pacing because reconnecting cannot create more subscribed lines.
 [[nodiscard]] bool is_market_data_capacity_error(int error_code);
 
+// Identifies an empty historical response without guessing why it is empty.
+// The schedule-aware caller decides whether the date is closed or must remain
+// pending; an empty response is never sufficient evidence of a holiday.
+[[nodiscard]] bool is_historical_no_data_error(
+    int error_code,
+    std::string_view message
+);
+
 // Connection interruptions are retried because they say nothing about whether
 // the requested data is valid. They must not leave a background backfill only
 // partially populated.

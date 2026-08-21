@@ -167,6 +167,7 @@ add_library(daytrader_core
     src/storage/MarketDataCsvStore.cpp
     src/storage/OrderFlowTickCsvStore.cpp
     src/storage/SetupOutcomeCsvStore.cpp
+    src/storage/TradingScheduleCsvStore.cpp
     src/strategy/LeveragedEtfSelector.cpp
     src/time/TimeZoneFormatter.cpp
     src/universe/EtfUniverse.cpp
@@ -234,4 +235,5 @@ if(BUILD_TESTING)
     daytrader_add_test(daytrader_terminal_key_decoder_tests tests/TerminalKeyDecoderTests.cpp)
     daytrader_add_test(daytrader_leveraged_execution_tests tests/LeveragedExecutionTests.cpp)
     daytrader_add_test(daytrader_setup_calibration_tests tests/SetupCalibrationTests.cpp)
+    daytrader_add_test(daytrader_trading_schedule_store_tests tests/TradingScheduleCsvStoreTests.cpp)
 endif()

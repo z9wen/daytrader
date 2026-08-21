@@ -41,6 +41,16 @@ bool is_market_data_capacity_error(int error_code)
     return error_code == 101;
 }
 
+bool is_historical_no_data_error(int error_code, std::string_view message)
+{
+    if (error_code != 162 && error_code != 165) {
+        return false;
+    }
+    const auto normalized = normalize(message);
+    return normalized.find("no data") != std::string::npos
+        || normalized.find("no historical market data") != std::string::npos;
+}
+
 bool is_connection_interruption_error(std::string_view message)
 {
     const auto normalized = normalize(message);

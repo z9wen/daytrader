@@ -16,7 +16,7 @@ fi
 
 while true; do
     clear
-    print "DAYTRADER YTD CACHE"
+    print "DAYTRADER ONE-MINUTE CACHE"
     print "Updated: $(date '+%Y-%m-%d %H:%M:%S %Z')"
     print "Directory: ${cache_directory}"
     print
@@ -36,9 +36,21 @@ while true; do
         continue
     fi
 
-    csv_count="$(find "${cache_directory}" -maxdepth 1 -type f -name '*.csv' ! -name '.*' | wc -l | tr -d ' ')"
+    # Count active year partitions only. The recoverable legacy_flat/ copies
+    # intentionally do not represent additional usable market-data coverage.
+    csv_count="$(find "${cache_directory}" -mindepth 2 -maxdepth 2 \
+        -type f -name '[12][0-9][0-9][0-9].csv' | wc -l | tr -d ' ')"
     cache_size="$(du -sh "${cache_directory}" | awk '{print $1}')"
     print "CSV files: ${csv_count}    Directory size: ${cache_size}"
+
+    schedule_directory="${cache_directory:h}/schedules/SPY"
+    schedule_files=("${schedule_directory}"/[12][0-9][0-9][0-9].csv(N))
+    if (( ${#schedule_files} > 0 )); then
+        schedule_sessions="$(awk 'FNR > 1 { rows += 1 } END { print rows + 0 }' "${schedule_files[@]}")"
+        print "IBKR SPY schedule: ${#schedule_files} years, ${schedule_sessions} sessions"
+    else
+        print "IBKR SPY schedule: not cached"
+    fi
 
     manifest="${cache_directory}/.completed_sessions.csv"
     if [[ -f "${manifest}" ]]; then
@@ -52,11 +64,16 @@ while true; do
     print
 
     print "Core one-minute rows:"
-    for symbol in QQQ SOXX TQQQ SOXL SPY; do
-        symbol_file="${cache_directory}/${symbol}.csv"
-        if [[ -f "${symbol_file}" ]]; then
-            rows="$(awk 'END { print NR > 0 ? NR - 1 : 0 }' "${symbol_file}")"
-            modified="$(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "${symbol_file}")"
+    for symbol in QQQ SPY SOXX TQQQ SOXL; do
+        symbol_files=("${cache_directory}/${symbol}"/*.csv(N))
+        legacy_file="${cache_directory}/${symbol}.csv"
+        if (( ${#symbol_files} == 0 )) && [[ -f "${legacy_file}" ]]; then
+            symbol_files=("${legacy_file}")
+        fi
+        if (( ${#symbol_files} > 0 )); then
+            rows="$(awk 'FNR > 1 { rows += 1 } END { print rows + 0 }' "${symbol_files[@]}")"
+            newest_file="$(ls -t "${symbol_files[@]}" | head -n 1)"
+            modified="$(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "${newest_file}")"
             printf '  %-5s %9s rows   modified %s\n' "${symbol}" "${rows}" "${modified}"
         else
             printf '  %-5s %9s\n' "${symbol}" "not started"

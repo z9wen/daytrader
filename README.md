@@ -107,11 +107,36 @@ Run the Order Flow experiment for 30 days or year to date:
 ./build/daytrader orderflow-backtest ytd
 ```
 
-One-minute bars are cached under `data/ibkr/all_1m/`; raw Order Flow events are
-cached under `data/ibkr/order_flow_ticks/`. Both are ignored by Git. Cached
-history is reused and successful downloads are persisted incrementally. The
-client does not add an artificial pacing delay; actual IBKR rate-limit responses
-are surfaced and retried.
+One-minute bars are cached by symbol and New York market year under
+`data/ibkr/all_1m/SYMBOL/YEAR.csv`; legacy `SYMBOL.csv` files remain readable.
+IBKR's SPY trading schedule is cached separately under
+`data/ibkr/schedules/SPY/YEAR.csv`. Only dates returned by IBKR as actual
+sessions are requested from the one-minute service. A scheduled session that
+returns no bars is reported as `MISSING_DATA` and is not marked complete.
+Raw Order Flow events are cached under `data/ibkr/order_flow_ticks/`. All local
+market-data caches are ignored by Git. Cached history is reused and successful
+downloads are persisted incrementally. The client does not add an artificial
+pacing delay; actual IBKR rate-limit responses are surfaced and retried.
+
+Organize existing flat cache files without connecting to IBKR:
+
+```sh
+./build/daytrader migrate-cache
+```
+
+After every source timestamp is verified in its year partition, the original
+flat files are retained under `data/ibkr/all_1m/legacy_flat/` as backups.
+
+Backfill the ordinary signal ETFs from 2020 through the current market date:
+
+```sh
+./build/daytrader cache-history 2020-01-01 all
+```
+
+Years are completed newest-first. Within each year QQQ, SPY, and SOXX are
+requested before the remaining ordinary sector and industry ETFs. Bulk aliases
+exclude leveraged ETFs; an explicitly named symbol can still be requested when
+an execution-price study needs it. Existing leveraged cache files are retained.
 
 The backtest uses the unleveraged ETF for direction and the leveraged ETF for
 execution, combines five-minute trend with one-minute timing, and includes all

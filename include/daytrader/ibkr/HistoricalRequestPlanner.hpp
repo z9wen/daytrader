@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <vector>
 
 namespace daytrader::ibkr {
@@ -19,6 +20,14 @@ inline constexpr int one_minute_max_duration_days = 365;
 plan_one_minute_day_windows(
     int calendar_days,
     int window_days = one_minute_max_duration_days
+);
+
+// Produces generic weekdays from newest to oldest for diagnostics. Durable
+// market-data caching uses IBKR SCHEDULE refDate values instead.
+[[nodiscard]] std::vector<std::chrono::sys_days>
+plan_market_weekdays_newest_first(
+    std::chrono::sys_days first_day,
+    std::chrono::sys_days last_day
 );
 
 } // namespace daytrader::ibkr

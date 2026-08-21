@@ -166,9 +166,9 @@ void backfill_minute_history(
         }
         {
             const std::lock_guard lock{history_mutex};
+            cache.merge(received);
             market_data::merge_instrument_bars(history, received);
             market_data::sort_and_deduplicate_bars(history);
-            cache.save(history);
         }
     }
 }
@@ -198,7 +198,10 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
     }
 
     const storage::MarketDataCsvStore cache{config_.minute_data_directory};
-    auto history = cache.load(request_symbols);
+    const auto history_start = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count() - static_cast<std::int64_t>(requested_history_days(config_)) * 86'400;
+    auto history = cache.load_since(request_symbols, history_start);
     market_data::sort_and_deduplicate_bars(history);
     analysis::SetupCalibrationEngine setup_calibration{
         config_.minute_data_directory.parent_path() / "setup_outcomes.csv",
@@ -347,8 +350,7 @@ void MarketMonitor::run(const std::function<bool()>& stop_requested) const
                     if (!last_scan_timestamp.has_value()
                         || scan.epoch_seconds > *last_scan_timestamp) {
                         try {
-                            const std::lock_guard lock{history_mutex};
-                            cache.save(history);
+                            cache.merge(bars);
                         } catch (const std::exception& exception) {
                             // A cache write failure must not interrupt live risk
                             // information or force an IBKR reconnect.

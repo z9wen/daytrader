@@ -34,4 +34,27 @@ std::vector<HistoricalDayWindow> plan_one_minute_day_windows(
     return windows;
 }
 
+std::vector<std::chrono::sys_days> plan_market_weekdays_newest_first(
+    std::chrono::sys_days first_day,
+    std::chrono::sys_days last_day
+)
+{
+    if (first_day > last_day) {
+        throw std::invalid_argument("historical first day must not follow last day");
+    }
+
+    std::vector<std::chrono::sys_days> days;
+    days.reserve(static_cast<std::size_t>((last_day - first_day).count() + 1));
+    for (auto day = last_day;; day -= std::chrono::days{1}) {
+        const std::chrono::weekday weekday{day};
+        if (weekday != std::chrono::Saturday && weekday != std::chrono::Sunday) {
+            days.push_back(day);
+        }
+        if (day == first_day) {
+            break;
+        }
+    }
+    return days;
+}
+
 } // namespace daytrader::ibkr

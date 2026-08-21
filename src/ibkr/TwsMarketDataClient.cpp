@@ -10,6 +10,7 @@
 #include "EClientSocket.h"
 #include "EReader.h"
 #include "EReaderOSSignal.h"
+#include "HistoricalSession.h"
 #include "TagValue.h"
 #include "bar.h"
 
@@ -27,6 +28,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -93,10 +95,38 @@ constexpr int first_historical_request_id = 1001;
     );
 }
 
+[[nodiscard]] std::string normalize_schedule_date(std::string_view value)
+{
+    if (value.size() == 10 && value[4] == '-' && value[7] == '-') {
+        return std::string{value};
+    }
+    if (value.size() != 8) {
+        throw std::runtime_error(
+            "IBKR returned an unexpected schedule refDate: " + std::string{value}
+        );
+    }
+    for (const char character : value) {
+        if (character < '0' || character > '9') {
+            throw std::runtime_error(
+                "IBKR returned an unexpected schedule refDate: "
+                + std::string{value}
+            );
+        }
+    }
+    return std::string{value.substr(0, 4)} + '-'
+        + std::string{value.substr(4, 2)} + '-'
+        + std::string{value.substr(6, 2)};
+}
+
 } // namespace
 
 class TwsMarketDataClient::Impl final : public DefaultEWrapper {
 public:
+    enum class RequestMode {
+        bars,
+        schedules,
+    };
+
     explicit Impl(config::IbkrConnectionSettings settings)
         : settings_{std::move(settings)}
         , signal_{250}
@@ -114,7 +144,7 @@ public:
         const std::function<bool()>& stop_requested
     )
     {
-        prepare(requests, false);
+        prepare(requests, false, RequestMode::bars);
         connect();
 
         while (!(stop_requested && stop_requested())
@@ -130,6 +160,34 @@ public:
         }
 
         return std::move(results_);
+    }
+
+    [[nodiscard]] std::vector<domain::TradingSchedule> fetch_schedules(
+        const std::vector<config::HistoricalDataSettings>& requests,
+        const std::function<bool()>& stop_requested
+    )
+    {
+        for (const auto& request : requests) {
+            if (request.data_type != "SCHEDULE" || request.bar_size != "1 day") {
+                throw std::invalid_argument(
+                    "historical schedule requests require SCHEDULE and 1 day"
+                );
+            }
+        }
+        prepare(requests, false, RequestMode::schedules);
+        connect();
+
+        while (!(stop_requested && stop_requested())
+               && !initial_data_complete_.load() && !failed_.load()) {
+            process_messages();
+        }
+
+        shutdown();
+        const auto failure = failure_message();
+        if (!failure.empty()) {
+            throw std::runtime_error(failure);
+        }
+        return std::move(schedule_results_);
     }
 
     void monitor(
@@ -164,7 +222,7 @@ public:
 
         bar_interval_ = bar_interval;
         completed_bar_handler_ = on_completed_bar;
-        prepare(requests, true);
+        prepare(requests, true, RequestMode::bars);
         synchronized_results_.clear();
         synchronized_results_.reserve(synchronization_symbols.size());
         for (const auto& symbol : synchronization_symbols) {
@@ -222,7 +280,7 @@ public:
     void historicalData(int request_id, const Bar& bar) override
     {
         const auto index = request_index(request_id);
-        if (!index.has_value()) {
+        if (!index.has_value() || request_mode_ != RequestMode::bars) {
             return;
         }
         store_bar(*index, bar);
@@ -241,9 +299,41 @@ public:
     void historicalDataEnd(int request_id, const std::string&, const std::string&) override
     {
         const auto index = request_index(request_id);
-        if (index.has_value()) {
+        if (index.has_value() && request_mode_ == RequestMode::bars) {
             complete_initial_request(*index);
         }
+    }
+
+    void historicalSchedule(
+        int request_id,
+        const std::string&,
+        const std::string&,
+        const std::string& time_zone,
+        const std::vector<HistoricalSession>& sessions
+    ) override
+    {
+        const auto index = request_index(request_id);
+        if (!index.has_value() || request_mode_ != RequestMode::schedules) {
+            return;
+        }
+
+        auto& result = schedule_results_[*index];
+        result.sessions.clear();
+        result.sessions.reserve(sessions.size());
+        try {
+            for (const auto& session : sessions) {
+                result.sessions.push_back(domain::TradingSession{
+                    .market_date = normalize_schedule_date(session.refDate),
+                    .start_datetime = session.startDateTime,
+                    .end_datetime = session.endDateTime,
+                    .time_zone = time_zone,
+                });
+            }
+        } catch (const std::exception& exception) {
+            fail(exception.what());
+            return;
+        }
+        complete_initial_request(*index);
     }
 
     void error(
@@ -269,6 +359,19 @@ public:
         if (is_pacing_or_rate_limit_error(error_code, error_text)) {
             std::cerr << message.str() << " (caller will retry)\n";
             fail(message.str());
+            return;
+        }
+
+        if (const auto index = request_index(request_id);
+            index.has_value()
+            && is_historical_no_data_error(error_code, error_text)) {
+            if (request_mode_ == RequestMode::schedules) {
+                fail(message.str());
+                return;
+            }
+            std::clog << message.str()
+                      << " (empty response returned for schedule validation)\n";
+            complete_initial_request(*index);
             return;
         }
 
@@ -308,7 +411,8 @@ private:
 
     void prepare(
         const std::vector<config::HistoricalDataSettings>& requests,
-        bool keep_up_to_date
+        bool keep_up_to_date,
+        RequestMode request_mode
     )
     {
         if (reader_ != nullptr || client_.isConnected()) {
@@ -333,10 +437,18 @@ private:
         }
 
         requests_ = requests;
+        request_mode_ = request_mode;
         results_.clear();
         results_.reserve(requests_.size());
         for (const auto& request : requests_) {
             results_.push_back(domain::InstrumentBars{.symbol = request.symbol});
+        }
+        schedule_results_.clear();
+        schedule_results_.reserve(requests_.size());
+        for (const auto& request : requests_) {
+            schedule_results_.push_back(domain::TradingSchedule{
+                .symbol = request.symbol,
+            });
         }
         ended_requests_.assign(requests_.size(), false);
         completed_requests_ = 0;
@@ -484,10 +596,12 @@ private:
 
     config::IbkrConnectionSettings settings_;
     std::vector<config::HistoricalDataSettings> requests_;
+    RequestMode request_mode_{RequestMode::bars};
     EReaderOSSignal signal_;
     EClientSocket client_;
     std::unique_ptr<EReader> reader_;
     std::vector<domain::InstrumentBars> results_;
+    std::vector<domain::TradingSchedule> schedule_results_;
     std::vector<bool> ended_requests_;
     std::size_t completed_requests_{};
     bool keep_up_to_date_{};
@@ -518,6 +632,14 @@ std::vector<domain::InstrumentBars> TwsMarketDataClient::fetch_historical_bars(
 )
 {
     return impl_->fetch(requests, stop_requested);
+}
+
+std::vector<domain::TradingSchedule> TwsMarketDataClient::fetch_historical_schedules(
+    const std::vector<config::HistoricalDataSettings>& requests,
+    const std::function<bool()>& stop_requested
+)
+{
+    return impl_->fetch_schedules(requests, stop_requested);
 }
 
 void TwsMarketDataClient::monitor_historical_bars(

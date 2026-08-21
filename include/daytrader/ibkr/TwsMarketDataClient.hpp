@@ -2,6 +2,7 @@
 
 #include "daytrader/config/MarketDataSettings.hpp"
 #include "daytrader/domain/InstrumentBars.hpp"
+#include "daytrader/domain/TradingSchedule.hpp"
 
 #include <chrono>
 #include <functional>
@@ -25,6 +26,13 @@ public:
 
     // One-shot historical fetch, primarily useful for diagnostics and tests.
     [[nodiscard]] std::vector<domain::InstrumentBars> fetch_historical_bars(
+        const std::vector<config::HistoricalDataSettings>& requests,
+        const std::function<bool()>& stop_requested = {}
+    );
+
+    // One-shot IBKR whatToShow=SCHEDULE requests. Results retain request order
+    // so callers can safely issue several year windows for the same symbol.
+    [[nodiscard]] std::vector<domain::TradingSchedule> fetch_historical_schedules(
         const std::vector<config::HistoricalDataSettings>& requests,
         const std::function<bool()>& stop_requested = {}
     );

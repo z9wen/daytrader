@@ -28,6 +28,13 @@ namespace daytrader::universe {
     std::span<const EtfDefinition> etfs
 );
 
+// Ordinary, unleveraged signal ETFs for long-horizon research caches. The
+// three primary model inputs are returned first; leveraged execution products
+// remain available to live monitoring but are not bulk-backfilled implicitly.
+[[nodiscard]] std::vector<config::HistoricalDataSettings> signal_cache_requests(
+    std::span<const EtfDefinition> etfs
+);
+
 // Symbols that must share a completed bar before publishing a new scan.
 [[nodiscard]] std::vector<std::string> signal_symbols(
     std::span<const EtfDefinition> etfs

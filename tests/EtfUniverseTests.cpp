@@ -105,6 +105,18 @@ void default_universe_is_complete_and_self_contained()
     require(cacheable_symbols.contains("TQQQ"), "TQQQ should be bulk-cacheable");
     require(!cacheable_symbols.contains("SOXS"), "inverse ETFs remain reference-only");
 
+    const auto signal_cache = daytrader::universe::signal_cache_requests(etfs);
+    require(signal_cache.size() == 33, "expected only ordinary signal ETFs");
+    require(signal_cache[0].symbol == "QQQ", "QQQ should be cached first");
+    require(signal_cache[1].symbol == "SPY", "SPY should be cached second");
+    require(signal_cache[2].symbol == "SOXX", "SOXX should be cached third");
+    std::unordered_set<std::string> signal_cache_symbols;
+    for (const auto& request : signal_cache) {
+        signal_cache_symbols.insert(request.symbol);
+    }
+    require(!signal_cache_symbols.contains("TQQQ"), "bulk signal cache excludes TQQQ");
+    require(!signal_cache_symbols.contains("SOXL"), "bulk signal cache excludes SOXL");
+
     const auto position_symbols = daytrader::universe::day_trade_position_symbols(etfs);
     const std::unordered_set<std::string> position_set{
         position_symbols.begin(),

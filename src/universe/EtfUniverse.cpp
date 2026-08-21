@@ -1,5 +1,7 @@
 #include "daytrader/universe/EtfUniverse.hpp"
 
+#include <array>
+#include <ranges>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -153,6 +155,35 @@ std::vector<config::HistoricalDataSettings> cacheable_etf_requests(
         return request.security_type != "STK";
     });
     return monitoring;
+}
+
+std::vector<config::HistoricalDataSettings> signal_cache_requests(
+    std::span<const EtfDefinition> etfs
+)
+{
+    const auto available = historical_data_requests(etfs);
+    std::vector<config::HistoricalDataSettings> requests;
+    requests.reserve(available.size());
+    std::unordered_set<std::string> seen;
+    const auto append = [&](std::string_view symbol) {
+        const auto found = std::ranges::find(
+            available,
+            symbol,
+            &config::HistoricalDataSettings::symbol
+        );
+        if (found != available.end() && seen.insert(found->symbol).second) {
+            requests.push_back(*found);
+        }
+    };
+
+    constexpr std::array priorities{"QQQ", "SPY", "SOXX"};
+    for (const auto* symbol : priorities) {
+        append(symbol);
+    }
+    for (const auto& request : available) {
+        append(request.symbol);
+    }
+    return requests;
 }
 
 std::vector<std::string> signal_symbols(std::span<const EtfDefinition> etfs)

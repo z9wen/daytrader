@@ -6,12 +6,14 @@
 #include "daytrader/ibkr/TwsMarketDataClient.hpp"
 #include "daytrader/market_data/InstrumentBarsMerger.hpp"
 #include "daytrader/storage/MarketDataCsvStore.hpp"
+#include "daytrader/storage/TradingScheduleCsvStore.hpp"
 #include "daytrader/time/TimeZoneFormatter.hpp"
 #include "daytrader/universe/EtfUniverse.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -37,6 +39,7 @@ constexpr int recent_refresh_days = 5;
 constexpr int one_minute_request_days = 1;
 constexpr std::size_t maximum_parallel_historical_requests = 50;
 constexpr auto cache_refresh_age = std::chrono::hours{6};
+constexpr std::string_view schedule_reference_symbol = "SPY";
 
 [[nodiscard]] const std::vector<std::string>& cached_symbols()
 {
@@ -114,6 +117,22 @@ constexpr auto cache_refresh_age = std::chrono::hours{6};
     );
 }
 
+[[nodiscard]] std::chrono::sys_days latest_complete_extended_market_day(
+    const std::string& time_zone
+)
+{
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+    const time::TimeZoneFormatter formatter{time_zone};
+    const auto today = parse_market_day(formatter.format_date(now));
+    // ETF extended trading ends at 20:00 New York. Before then, today's
+    // response is necessarily partial and must not enter the durable manifest.
+    return formatter.minutes_since_midnight(now) >= 20 * 60
+        ? today
+        : today - std::chrono::days{1};
+}
+
 [[nodiscard]] std::int64_t daily_request_end(
     std::chrono::sys_days market_day
 )
@@ -140,6 +159,25 @@ constexpr auto cache_refresh_age = std::chrono::hours{6};
     result.push_back('-');
     append_two(static_cast<unsigned>(date.day()));
     return result;
+}
+
+[[nodiscard]] config::HistoricalDataSettings schedule_request_for(
+    const config::AppConfig& config,
+    std::chrono::sys_days end_day
+)
+{
+    auto request = find_market_data_request(
+        config,
+        std::string{schedule_reference_symbol}
+    );
+    request.duration = "1 Y";
+    request.bar_size = "1 day";
+    request.data_type = "SCHEDULE";
+    request.regular_trading_hours_only = true;
+    request.end_delay = std::chrono::minutes::zero();
+    request.end_timestamp = daily_request_end(end_day);
+    request.required = true;
+    return request;
 }
 
 [[nodiscard]] std::unordered_map<std::string, std::unordered_set<std::string>>
@@ -179,29 +217,164 @@ complete_extended_sessions(
     return result;
 }
 
-[[nodiscard]] std::vector<std::chrono::sys_days> cached_market_sessions(
+[[nodiscard]] std::vector<domain::TradingSchedule>
+fetch_schedules_with_reactive_retry(
+    const config::AppConfig& config,
+    const std::vector<config::HistoricalDataSettings>& requests
+)
+{
+    while (true) {
+        try {
+            auto connection = config.ibkr;
+            ibkr::TwsMarketDataClient client{std::move(connection)};
+            return client.fetch_historical_schedules(requests);
+        } catch (const std::exception& exception) {
+            const bool retryable = ibkr::is_pacing_or_rate_limit_error(exception.what())
+                || ibkr::is_connection_interruption_error(exception.what());
+            if (!retryable) {
+                throw;
+            }
+            std::cerr << "IBKR trading-schedule request interrupted; retrying the "
+                         "same request set after reconnect: "
+                      << exception.what() << '\n';
+            std::this_thread::sleep_for(config.monitoring.reconnect_delay);
+        }
+    }
+}
+
+[[nodiscard]] std::vector<std::chrono::sys_days> load_cached_market_sessions(
     const config::AppConfig& config,
     std::chrono::sys_days first_day,
     std::chrono::sys_days last_day
 )
 {
-    const storage::MarketDataCsvStore schedule_store{
-        config.minute_data_directory.parent_path() / "rth_5m"
-    };
-    const std::vector<std::string> qqq{"QQQ"};
-    const auto reference = schedule_store.load(qqq);
-    if (reference.empty() || reference.front().bars.empty()) {
+    if (first_day > last_day) {
         return {};
     }
-    const time::TimeZoneFormatter formatter{config.time_zone};
-    std::set<std::chrono::sys_days> unique_days;
-    for (const auto& bar : reference.front().bars) {
-        const auto day = parse_market_day(formatter.format_date(bar.epoch_seconds));
-        if (day >= first_day && day <= last_day) {
-            unique_days.insert(day);
+    const storage::TradingScheduleCsvStore schedule_store{
+        config.minute_data_directory.parent_path() / "schedules"
+    };
+    const int first_year = static_cast<int>(
+        std::chrono::year_month_day{first_day}.year()
+    );
+    const int last_year = static_cast<int>(
+        std::chrono::year_month_day{last_day}.year()
+    );
+    for (int year = first_year; year <= last_year; ++year) {
+        const auto target_end = std::min(
+            last_day,
+            std::chrono::sys_days{
+                std::chrono::year{year} / std::chrono::December
+                    / std::chrono::day{31}
+            }
+        );
+        if (!schedule_store.covers_through(
+                std::string{schedule_reference_symbol},
+                year,
+                market_day_string(target_end)
+            )) {
+            throw std::runtime_error(
+                "local IBKR trading schedule does not cover SPY through "
+                + market_day_string(target_end)
+            );
         }
     }
-    return {unique_days.begin(), unique_days.end()};
+    const auto schedule = schedule_store.load_range(
+        std::string{schedule_reference_symbol},
+        market_day_string(first_day),
+        market_day_string(last_day)
+    );
+    std::vector<std::chrono::sys_days> days;
+    days.reserve(schedule.sessions.size());
+    for (const auto& session : schedule.sessions) {
+        days.push_back(parse_market_day(session.market_date));
+    }
+    return days;
+}
+
+[[nodiscard]] std::vector<std::chrono::sys_days> load_or_fetch_market_sessions(
+    const config::AppConfig& config,
+    std::chrono::sys_days first_day,
+    std::chrono::sys_days last_day
+)
+{
+    if (first_day > last_day) {
+        return {};
+    }
+    const auto directory = config.minute_data_directory.parent_path() / "schedules";
+    const storage::TradingScheduleCsvStore store{directory};
+    const int first_year = static_cast<int>(
+        std::chrono::year_month_day{first_day}.year()
+    );
+    const int last_year = static_cast<int>(
+        std::chrono::year_month_day{last_day}.year()
+    );
+    std::vector<int> requested_years;
+    std::vector<std::string> requested_coverage;
+    std::vector<config::HistoricalDataSettings> requests;
+    for (int year = last_year; year >= first_year; --year) {
+        const auto year_end = std::min(
+            last_day,
+            std::chrono::sys_days{
+                std::chrono::year{year} / std::chrono::December
+                    / std::chrono::day{31}
+            }
+        );
+        const auto coverage = market_day_string(year_end);
+        if (store.covers_through(
+                std::string{schedule_reference_symbol}, year, coverage
+            )) {
+            continue;
+        }
+        requested_years.push_back(year);
+        requested_coverage.push_back(coverage);
+        requests.push_back(schedule_request_for(config, year_end));
+    }
+
+    if (!requests.empty()) {
+        std::clog << "Fetching " << requests.size()
+                  << " IBKR annual trading schedules for SPY\n";
+        auto fetched = fetch_schedules_with_reactive_retry(config, requests);
+        if (fetched.size() != requested_years.size()) {
+            throw std::runtime_error(
+                "IBKR trading schedules returned an unexpected result count"
+            );
+        }
+        for (std::size_t index = 0; index < fetched.size(); ++index) {
+            const int year = requested_years[index];
+            const auto prefix = std::to_string(year) + '-';
+            std::vector<domain::TradingSession> sessions;
+            for (auto& session : fetched[index].sessions) {
+                if (session.market_date.starts_with(prefix)) {
+                    sessions.push_back(std::move(session));
+                }
+            }
+            if (sessions.empty()) {
+                throw std::runtime_error(
+                    "IBKR returned no SPY trading sessions for "
+                    + std::to_string(year)
+                );
+            }
+            store.save_year(
+                std::string{schedule_reference_symbol},
+                year,
+                sessions,
+                requested_coverage[index]
+            );
+            std::clog << "Cached " << sessions.size()
+                      << " SPY trading sessions for " << year << '\n';
+        }
+    }
+
+    auto days = load_cached_market_sessions(config, first_day, last_day);
+    if (days.empty()) {
+        throw std::runtime_error(
+            "IBKR trading schedule contains no sessions in the requested range"
+        );
+    }
+    std::ranges::sort(days, std::greater{});
+    days.erase(std::unique(days.begin(), days.end()), days.end());
+    return days;
 }
 
 [[nodiscard]] std::vector<domain::InstrumentBars> fetch_with_reactive_retry(
@@ -241,41 +414,30 @@ complete_extended_sessions(
     int calendar_days,
     std::span<const std::string> request_symbols,
     std::vector<domain::InstrumentBars> history,
-    const storage::MarketDataCsvStore& store
+    const storage::MarketDataCsvStore& store,
+    bool retain_history = true
 )
 {
     const auto today = current_market_day(config.time_zone);
     const auto first_day = today - std::chrono::days{calendar_days - 1};
+    const auto last_complete_day = latest_complete_extended_market_day(
+        config.time_zone
+    );
     std::vector<std::pair<ibkr::HistoricalDayWindow, std::chrono::sys_days>> windows;
-    const auto known_sessions = cached_market_sessions(config, first_day, today);
-    if (!known_sessions.empty()) {
-        windows.reserve(known_sessions.size());
-        for (const auto market_day : known_sessions) {
-            windows.emplace_back(
-                ibkr::HistoricalDayWindow{
-                    .duration_days = one_minute_request_days,
-                    .end_delay_days = static_cast<int>((today - market_day).count()),
-                },
-                market_day
-            );
-        }
-        std::clog << "Using " << windows.size()
-                  << " actual sessions from the local QQQ RTH schedule\n";
-    } else {
-        const auto planned_windows = ibkr::plan_one_minute_day_windows(
-            calendar_days,
-            one_minute_request_days
+    const auto market_days = load_or_fetch_market_sessions(
+        config,
+        first_day,
+        last_complete_day
+    );
+    windows.reserve(market_days.size());
+    for (const auto market_day : market_days) {
+        windows.emplace_back(
+            ibkr::HistoricalDayWindow{
+                .duration_days = one_minute_request_days,
+                .end_delay_days = static_cast<int>((today - market_day).count()),
+            },
+            market_day
         );
-        windows.reserve(planned_windows.size());
-        for (const auto& window : planned_windows) {
-            const auto market_day = today - std::chrono::days{window.end_delay_days};
-            const std::chrono::weekday weekday{market_day};
-            if (weekday == std::chrono::Saturday
-                || weekday == std::chrono::Sunday) {
-                continue;
-            }
-            windows.emplace_back(window, market_day);
-        }
     }
 
     struct DailyRequest {
@@ -289,28 +451,44 @@ complete_extended_sessions(
     }
     std::vector<DailyRequest> pending;
     pending.reserve(windows.size() * request_symbols.size());
-    // Symbol-major ordering completes QQQ/SOXX before breadth data when the
-    // all-universe command supplies them first in its priority list.
-    for (const auto& symbol : request_symbols) {
-        for (const auto& [window, market_day] : windows) {
-            const auto date = market_day_string(market_day);
-            const auto symbol_dates = completed.find(symbol);
-            if (symbol_dates != completed.end()
-                && symbol_dates->second.contains(date)) {
-                continue;
-            }
-            pending.push_back(DailyRequest{
-                .window = window,
-                .market_day = market_day,
-                .symbol = symbol,
-            });
+    // Finish the newest year before moving backward. Within each year the
+    // caller-supplied symbol order keeps QQQ, SPY, and SOXX ahead of breadth.
+    std::size_t year_begin{};
+    while (year_begin < windows.size()) {
+        const int year = static_cast<int>(
+            std::chrono::year_month_day{windows[year_begin].second}.year()
+        );
+        std::size_t year_end = year_begin + 1;
+        while (year_end < windows.size()
+               && static_cast<int>(
+                   std::chrono::year_month_day{windows[year_end].second}.year()
+               ) == year) {
+            ++year_end;
         }
+        for (const auto& symbol : request_symbols) {
+            for (std::size_t index = year_begin; index < year_end; ++index) {
+                const auto& [window, market_day] = windows[index];
+                const auto date = market_day_string(market_day);
+                const auto symbol_dates = completed.find(symbol);
+                if (symbol_dates != completed.end()
+                    && symbol_dates->second.contains(date)) {
+                    continue;
+                }
+                pending.push_back(DailyRequest{
+                    .window = window,
+                    .market_day = market_day,
+                    .symbol = symbol,
+                });
+            }
+        }
+        year_begin = year_end;
     }
     std::clog << "Daily cache already complete for "
               << windows.size() * request_symbols.size() - pending.size()
               << " symbol-days; requesting " << pending.size() << " missing days\n";
 
     std::size_t completed_requests{};
+    std::vector<std::string> missing_sessions;
     std::size_t parallel_requests = maximum_parallel_historical_requests;
     while (completed_requests < pending.size()) {
         const auto batch_size = std::min(
@@ -373,36 +551,68 @@ complete_extended_sessions(
                 );
             }
             received_counts.push_back(fetched[index].bars.size());
-            changed_symbols.insert(item.symbol);
-            completed_batch[item.symbol].insert(
-                market_day_string(item.market_day)
-            );
-        }
-        market_data::merge_instrument_bars(history, std::move(fetched));
-
-        for (const auto& symbol : changed_symbols) {
-            const auto changed = std::ranges::find(
-                history,
-                symbol,
-                &domain::InstrumentBars::symbol
-            );
-            if (changed == history.end()) {
-                throw std::runtime_error(
-                    "IBKR daily result did not include requested symbol " + symbol
+            if (!fetched[index].bars.empty()) {
+                changed_symbols.insert(item.symbol);
+                completed_batch[item.symbol].insert(
+                    market_day_string(item.market_day)
+                );
+            } else {
+                missing_sessions.push_back(
+                    item.symbol + '@' + market_day_string(item.market_day)
                 );
             }
-            market_data::sort_and_deduplicate_bars(*changed);
-            store.save(std::span<const domain::InstrumentBars>{&*changed, 1});
+        }
+        store.merge(fetched);
+        if (retain_history) {
+            market_data::merge_instrument_bars(history, std::move(fetched));
+            for (const auto& symbol : changed_symbols) {
+                const auto changed = std::ranges::find(
+                    history,
+                    symbol,
+                    &domain::InstrumentBars::symbol
+                );
+                if (changed == history.end()) {
+                    throw std::runtime_error(
+                        "IBKR daily result did not include requested symbol " + symbol
+                    );
+                }
+                market_data::sort_and_deduplicate_bars(*changed);
+            }
         }
         store.mark_sessions_complete(completed_batch);
 
         for (std::size_t index = 0; index < batch_size; ++index) {
             const auto& item = batch_begin[static_cast<std::ptrdiff_t>(index)];
-            std::clog << "Cached " << received_counts[index]
-                      << " returned bars for " << item.symbol << " | "
-                      << market_day_string(item.market_day) << '\n';
+            if (received_counts[index] == 0) {
+                std::cerr << "MISSING_DATA 0 returned bars for " << item.symbol
+                          << " on scheduled session "
+                          << market_day_string(item.market_day)
+                          << "; completion marker withheld\n";
+            } else {
+                std::clog << "Cached " << received_counts[index]
+                          << " returned bars for " << item.symbol << " | "
+                          << market_day_string(item.market_day) << '\n';
+            }
         }
         completed_requests += batch_size;
+    }
+    if (!missing_sessions.empty()) {
+        std::string summary;
+        const std::size_t shown = std::min<std::size_t>(missing_sessions.size(), 10);
+        for (std::size_t index = 0; index < shown; ++index) {
+            if (!summary.empty()) {
+                summary += ", ";
+            }
+            summary += missing_sessions[index];
+        }
+        if (missing_sessions.size() > shown) {
+            summary += ", ...";
+        }
+        throw std::runtime_error(
+            "IBKR returned no bars for " + std::to_string(missing_sessions.size())
+            + " scheduled symbol-days; they remain pending for the next run: "
+            + summary
+        );
     }
     return history;
 }
@@ -438,12 +648,10 @@ complete_extended_sessions(
     }
     std::clog << "Refreshing local IBKR cache with the latest " << duration_days
               << " complete 1-minute days\n";
-    market_data::merge_instrument_bars(
-        history,
-        fetch_with_reactive_retry(config, requests)
-    );
+    auto fetched = fetch_with_reactive_retry(config, requests);
+    store.merge(fetched);
+    market_data::merge_instrument_bars(history, std::move(fetched));
     market_data::sort_and_deduplicate_bars(history);
-    store.save(history);
     return history;
 }
 
@@ -631,7 +839,14 @@ complete_extended_sessions(
 
     const auto today = current_market_day(config.time_zone);
     const auto first_day = today - std::chrono::days{calendar_days - 1};
-    const auto sessions = cached_market_sessions(config, first_day, today);
+    const auto last_complete_day = latest_complete_extended_market_day(
+        config.time_zone
+    );
+    const auto sessions = load_cached_market_sessions(
+        config,
+        first_day,
+        last_complete_day
+    );
     if (sessions.empty()) {
         throw std::runtime_error(
             "local " + std::string{label}
@@ -690,14 +905,13 @@ void IbkrBacktestRunner::cache_history(
     // File age and first/last timestamps are insufficient because a process can
     // be interrupted in the middle of YTD while both range endpoints exist.
     const storage::MarketDataCsvStore store{config.minute_data_directory};
-    auto history = store.load(symbols);
-    market_data::sort_and_deduplicate_bars(history);
     static_cast<void>(fetch_history(
         config,
         calendar_days,
         symbols,
-        std::move(history),
-        store
+        {},
+        store,
+        false
     ));
 }
 

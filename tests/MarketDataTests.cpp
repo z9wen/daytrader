@@ -186,6 +186,20 @@ void retries_only_after_an_actual_pacing_response()
         !daytrader::ibkr::is_market_data_capacity_error(100),
         "message pacing and ticker-line capacity are different responses"
     );
+    require(
+        daytrader::ibkr::is_historical_no_data_error(
+            162,
+            "HMDS query returned no data"
+        ),
+        "an empty response should remain distinguishable for schedule validation"
+    );
+    require(
+        !daytrader::ibkr::is_historical_no_data_error(
+            162,
+            "Historical data request pacing violation"
+        ),
+        "a pacing response must not be mistaken for an empty date"
+    );
 }
 
 void plans_one_minute_history_at_the_official_duration_boundary()
@@ -212,6 +226,21 @@ void plans_one_minute_history_at_the_official_duration_boundary()
             "the middle durable window should remain contiguous");
     require(durable[2].duration_days == 30 && durable[2].end_delay_days == 0,
             "the newest durable window should end at the present");
+}
+
+void plans_bulk_cache_years_from_newest_to_oldest()
+{
+    using namespace std::chrono;
+    const auto first = sys_days{year{2025} / December / day{30}};
+    const auto last = sys_days{year{2026} / January / day{5}};
+    const auto days = daytrader::ibkr::plan_market_weekdays_newest_first(first, last);
+    require(days.size() == 5, "weekends should not create historical requests");
+    require(days.front() == last, "the newest year must be planned first");
+    require(days.back() == first, "the oldest requested date must remain included");
+    require(
+        year_month_day{days[3]}.year() == year{2025},
+        "the plan should cross into the prior year only after newer weekdays"
+    );
 }
 
 void recognizes_connection_interruptions_without_hiding_request_errors()
@@ -254,6 +283,7 @@ int main()
         regular_session_is_a_view_and_keeps_extended_source();
         retries_only_after_an_actual_pacing_response();
         plans_one_minute_history_at_the_official_duration_boundary();
+        plans_bulk_cache_years_from_newest_to_oldest();
         recognizes_connection_interruptions_without_hiding_request_errors();
         std::cout << "MarketDataTests passed\n";
         return 0;
